@@ -1,0 +1,59 @@
+/**
+ * CorpPilot 前端类型定义
+ * 完全对应后端 POST /api/analyze 的返回结构
+ */
+
+// ============ 汇总统计 ============
+export interface Summary {
+  total_cost: number        // 总成本
+  avg_work_hours: number    // 平均工时
+  anomaly_count: number     // 异常数量
+}
+
+// ============ 部门统计 ============
+export interface DepartmentStat {
+  dept: string              // 部门名称
+  cost: number              // 部门成本
+  avg_hours: number         // 平均工时
+  headcount: number         // 人数
+}
+
+// ============ 项目 Top10 ============
+export interface ProjectTop10 {
+  code: string              // 项目代码
+  name: string              // 项目名称
+  cost: number              // 项目成本
+}
+
+// ============ 异常记录 ============
+export interface Anomaly {
+  date: string              // 日期
+  name: string              // 姓名
+  dept: string              // 部门
+  type: string              // 异常类型：Conflict, Missing, etc.
+  detail: string            // 详细说明
+}
+
+// ============ 完整分析结果 ============
+export interface AnalysisResult {
+  summary: Summary
+  department_stats: DepartmentStat[]
+  project_top10: ProjectTop10[]
+  anomalies: Anomaly[]
+}
+
+// ============ API 响应包装 ============
+export interface ApiResponse<T = any> {
+  success: boolean
+  message: string
+  data?: T
+}
+
+// ============ 上传响应 ============
+export interface UploadResponse {
+  file_path: string
+  file_size: number
+  sheets: string[]
+}
+
+

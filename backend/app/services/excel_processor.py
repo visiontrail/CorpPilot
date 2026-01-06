@@ -9,6 +9,15 @@ from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime
 import re
 import os
+import sys
+from pathlib import Path
+
+# 添加根目录到 sys.path 以导入日志模块
+ROOT_DIR = Path(__file__).resolve().parents[3]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from logger_config import get_logger
 
 
 class ExcelProcessor:
@@ -18,6 +27,7 @@ class ExcelProcessor:
         self.file_path = file_path
         self.sheets_data: Dict[str, pd.DataFrame] = {}
         self.workbook = None
+        self.logger = get_logger("excel_processor")
         
     def load_all_sheets(self) -> Dict[str, pd.DataFrame]:
         """
@@ -77,7 +87,8 @@ class ExcelProcessor:
         amount_col = '授信金额' if '授信金额' in df.columns else '金额'
         if amount_col in df.columns:
             df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce')
-            df = df[df[amount_col] > 0]  # 过滤无效金额
+            # 将 NaN 填充为 0，但保留所有记录
+            df[amount_col] = df[amount_col].fillna(0)
         
         # 处理日期字段
         date_cols = ['出发日期', '入住日期', '订单日期']
@@ -115,39 +126,140 @@ class ExcelProcessor:
         Args:
             top_n: 返回前N个项目，其余汇总到"其他"（默认20）
         """
+        self.logger.info("=" * 80)
+        self.logger.info("开始执行项目成本归集 - 详细模式（Backend服务）")
+        self.logger.info("=" * 80)
+        
         results = []
         
         # 处理所有差旅相关的 Sheet
         travel_sheets = ['机票', '酒店', '火车票']
         
         all_records = []
+        sheet_stats = {}
         
         for sheet_name in travel_sheets:
+            self.logger.info(f"\n📋 处理差旅表: {sheet_name}")
+            
+            # 获取原始数据（未清洗）以获取真实行数
+            df_raw = self.get_sheet(sheet_name)
+            original_count = 0 if df_raw is None else len(df_raw)
+            
             df = self.clean_travel_data(sheet_name)
             if df.empty:
+                self.logger.warning(f"   ⚠️  {sheet_name} 数据为空")
                 continue
             
             # 检查是否有项目字段
             if '项目' not in df.columns:
+                self.logger.warning(f"   ⚠️  {sheet_name} 缺少'项目'列")
                 continue
             
             amount_col = '授信金额' if '授信金额' in df.columns else '金额'
+            self.logger.info(f"   - 原始记录数: {original_count}")
+            self.logger.info(f"   - 清洗后记录数: {len(df)}")
+            self.logger.info(f"   - 金额列: {amount_col}")
             
-            for _, row in df.iterrows():
-                project_code, project_name = self.extract_project_code(row.get('项目', ''))
-                if project_code:
-                    all_records.append({
-                        'project_code': project_code,
-                        'project_name': project_name,
-                        'amount': row.get(amount_col, 0),
-                        'type': sheet_name,
-                        'person': row.get('姓名', ''),
-                        'date': row.get('出发日期', '')
-                    })
+            # 统计信息
+            record_count = 0
+            empty_project_count = 0
+            sheet_total_amount = 0
+            
+            for idx, row in df.iterrows():
+                project_str = row.get('项目', '')
+                project_code, project_name = self.extract_project_code(project_str)
+                amount = row.get(amount_col, 0)
+                
+                # 空项目作为单独的项目类别处理
+                if not project_code:
+                    project_code = '空项目'
+                    project_name = '未分配项目'
+                    empty_project_count += 1
+                
+                all_records.append({
+                    'project_code': project_code,
+                    'project_name': project_name,
+                    'amount': amount,
+                    'type': sheet_name,
+                    'person': row.get('姓名', ''),
+                    'date': row.get('出发日期', '')
+                })
+                record_count += 1
+                sheet_total_amount += amount
+                
+                # 输出前3条记录的详细信息
+                if record_count <= 3:
+                    person = row.get('姓名', '未知')
+                    date_val = row.get('出发日期', '')
+                    # 安全的日期格式化
+                    if pd.notna(date_val) and hasattr(date_val, 'strftime'):
+                        date_str = date_val.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(date_val) if pd.notna(date_val) else '未知'
+                    self.logger.debug(f"      记录{record_count}: {project_code} | {person} | ¥{amount:,.2f} | {date_str}")
+            
+            sheet_stats[sheet_name] = {
+                'original_total': original_count,
+                'cleaned_total': len(df),
+                'record_count': record_count,
+                'empty_project_count': empty_project_count,
+                'amount': sheet_total_amount
+            }
+            
+            # 统计金额分布 - 基于所有清洗后记录
+            zero_amount_count = (df[amount_col] == 0).sum() if amount_col in df.columns else 0
+            negative_amount_count = (df[amount_col] < 0).sum() if amount_col in df.columns else 0
+            positive_amount_count = (df[amount_col] > 0).sum() if amount_col in df.columns else 0
+            filtered_count = original_count - len(df)
+            
+            # 计算正数/负数金额总和（基于所有清洗后记录）
+            negative_amount_sum = df[df[amount_col] < 0][amount_col].sum() if amount_col in df.columns and negative_amount_count > 0 else 0
+            positive_amount_sum = df[df[amount_col] > 0][amount_col].sum() if amount_col in df.columns and positive_amount_count > 0 else 0
+            # 所有记录的净总金额（用于日志显示，确保与正数+负数一致）
+            sheet_all_amount = df[amount_col].sum() if amount_col in df.columns else 0
+            
+            self.logger.info(f"   ✅ 处理完成:")
+            self.logger.info(f"      - 总记录数: {record_count}")
+            if empty_project_count > 0:
+                self.logger.info(f"      - 空项目记录: {empty_project_count} (已归入\"空项目\"类别)")
+            if filtered_count > 0:
+                self.logger.warning(f"      ⚠️  数据清洗时过滤记录: {filtered_count}条")
+            
+            # 金额分布统计（基于所有清洗后记录）
+            self.logger.info(f"      - 金额分布（全部记录）:")
+            if positive_amount_count > 0:
+                self.logger.info(f"         • 正数金额: {positive_amount_count}条, 合计 ¥{positive_amount_sum:,.2f}")
+            if negative_amount_count > 0:
+                self.logger.warning(f"         • 负数金额: {negative_amount_count}条, 合计 ¥{negative_amount_sum:,.2f} (退款/调整)")
+            if zero_amount_count > 0:
+                self.logger.info(f"         • 零值金额: {zero_amount_count}条")
+            self.logger.info(f"         • 净总金额: ¥{sheet_all_amount:,.2f}")
+        
+        # 输出汇总统计
+        self.logger.info(f"\n📊 差旅数据汇总:")
+        original_total_records = sum(stats['original_total'] for stats in sheet_stats.values())
+        cleaned_total_records = sum(stats['cleaned_total'] for stats in sheet_stats.values())
+        total_records = sum(stats['record_count'] for stats in sheet_stats.values())
+        empty_project_records = sum(stats['empty_project_count'] for stats in sheet_stats.values())
+        total_amount = sum(stats['amount'] for stats in sheet_stats.values())
+        
+        self.logger.info(f"   - 原始总记录数: {original_total_records}")
+        self.logger.info(f"   - 清洗后总记录数: {cleaned_total_records}")
+        self.logger.info(f"   - 处理记录数: {total_records}")
+        if empty_project_records > 0:
+            self.logger.info(f"   - 空项目记录数: {empty_project_records} (已归入\"空项目\"类别)")
+        if original_total_records > cleaned_total_records:
+            filtered = original_total_records - cleaned_total_records
+            self.logger.warning(f"   ⚠️  数据清洗过滤了 {filtered} 条记录（可能是无效数据或删除行）")
+        self.logger.info(f"   - 净总金额: ¥{total_amount:,.2f}")
+        self.logger.info(f"   - 💡 说明: 负数金额（退款/调整）已包含在净总金额计算中")
         
         # 按项目代码聚合
         if all_records:
+            self.logger.info(f"\n🔄 开始聚合项目数据...")
             df_projects = pd.DataFrame(all_records)
+            self.logger.debug(f"   - 待聚合记录数: {len(df_projects)}")
+            
             grouped = df_projects.groupby(['project_code', 'project_name']).agg({
                 'amount': 'sum',
                 'person': 'count'
@@ -157,14 +269,54 @@ class ExcelProcessor:
             grouped = grouped.sort_values('amount', ascending=False).reset_index(drop=True)
             
             total_count = len(grouped)
+            self.logger.info(f"   ✅ 聚合完成，共 {total_count} 个唯一项目")
+            
+            # 验证金额总和
+            grouped_total = grouped['amount'].sum()
+            if abs(grouped_total - total_amount) > 0.01:
+                self.logger.error(f"   ⚠️  金额验证失败！")
+                self.logger.error(f"      原始总计: ¥{total_amount:,.2f}")
+                self.logger.error(f"      聚合总计: ¥{grouped_total:,.2f}")
+            
+            self.logger.info(f"\n🏆 项目成本排名（Top {min(top_n, total_count)}）:")
             
             # 如果项目数量超过 top_n，将超出部分汇总到"其他"
             if total_count > top_n:
+                self.logger.info(f"   - 展示前{top_n}个项目")
+                self.logger.info(f"   - 其余{total_count - top_n}个项目汇总到\"其他\"")
+                
                 # 前 top_n 个项目
-                for _, row in grouped.head(top_n).iterrows():
+                for idx, row in grouped.head(top_n).iterrows():
                     project_details = df_projects[
                         df_projects['project_code'] == row['project_code']
                     ].to_dict('records')
+                    
+                    # 计算分类成本
+                    project_df = df_projects[df_projects['project_code'] == row['project_code']]
+                    flight_cost = project_df[project_df['type'] == '机票']['amount'].sum()
+                    hotel_cost = project_df[project_df['type'] == '酒店']['amount'].sum()
+                    train_cost = project_df[project_df['type'] == '火车票']['amount'].sum()
+                    
+                    self.logger.info(f"\n   #{idx+1}. {row['project_code']} - {row['project_name']}")
+                    self.logger.info(f"      总成本: ¥{row['amount']:,.2f} | 订单数: {int(row['person'])}")
+                    self.logger.info(f"      ├─ 机票: ¥{flight_cost:,.2f}")
+                    self.logger.info(f"      ├─ 酒店: ¥{hotel_cost:,.2f}")
+                    self.logger.info(f"      └─ 火车票: ¥{train_cost:,.2f}")
+                    
+                    # 输出前3条明细
+                    if len(project_details) > 0:
+                        self.logger.debug(f"      明细（前3条）:")
+                        for i, detail in enumerate(project_details[:3], 1):
+                            person = detail.get('person', '未知')
+                            amount = detail.get('amount', 0)
+                            travel_type = detail.get('type', '未知')
+                            date_val = detail.get('date', '')
+                            # 安全的日期格式化
+                            if pd.notna(date_val) and hasattr(date_val, 'strftime'):
+                                date_str = date_val.strftime('%Y-%m-%d')
+                            else:
+                                date_str = str(date_val) if pd.notna(date_val) else '未知'
+                            self.logger.debug(f"         {i}. {travel_type} | {person} | ¥{amount:,.2f} | {date_str}")
                     
                     results.append({
                         'project_code': row['project_code'],
@@ -179,6 +331,10 @@ class ExcelProcessor:
                 others_total_cost = float(others_df['amount'].sum())
                 others_record_count = int(others_df['person'].sum())
                 
+                self.logger.info(f"\n   #{top_n+1}. 其他")
+                self.logger.info(f"      汇总项目数: {total_count - top_n}")
+                self.logger.info(f"      总成本: ¥{others_total_cost:,.2f} | 订单数: {others_record_count}")
+                
                 results.append({
                     'project_code': '其他',
                     'project_name': f'其他项目（{total_count - top_n}个）',
@@ -188,10 +344,24 @@ class ExcelProcessor:
                 })
             else:
                 # 如果不超过 top_n，返回全部
-                for _, row in grouped.iterrows():
+                self.logger.info(f"   - 项目总数不超过{top_n}，返回全部")
+                
+                for idx, row in grouped.iterrows():
                     project_details = df_projects[
                         df_projects['project_code'] == row['project_code']
                     ].to_dict('records')
+                    
+                    # 计算分类成本
+                    project_df = df_projects[df_projects['project_code'] == row['project_code']]
+                    flight_cost = project_df[project_df['type'] == '机票']['amount'].sum()
+                    hotel_cost = project_df[project_df['type'] == '酒店']['amount'].sum()
+                    train_cost = project_df[project_df['type'] == '火车票']['amount'].sum()
+                    
+                    self.logger.info(f"\n   #{idx+1}. {row['project_code']} - {row['project_name']}")
+                    self.logger.info(f"      总成本: ¥{row['amount']:,.2f} | 订单数: {int(row['person'])}")
+                    self.logger.info(f"      ├─ 机票: ¥{flight_cost:,.2f}")
+                    self.logger.info(f"      ├─ 酒店: ¥{hotel_cost:,.2f}")
+                    self.logger.info(f"      └─ 火车票: ¥{train_cost:,.2f}")
                     
                     results.append({
                         'project_code': row['project_code'],
@@ -200,6 +370,18 @@ class ExcelProcessor:
                         'record_count': int(row['person']),
                         'details': project_details[:10]
                     })
+            
+            # 最终汇总
+            self.logger.info(f"\n" + "=" * 80)
+            self.logger.info(f"✅ 项目成本归集完成")
+            self.logger.info(f"=" * 80)
+            self.logger.info(f"📊 最终统计:")
+            self.logger.info(f"   - 返回项目数: {len(results)}")
+            self.logger.info(f"   - 总成本: ¥{sum(r['total_cost'] for r in results):,.2f}")
+            self.logger.info(f"   - 总订单数: {sum(r['record_count'] for r in results)}")
+            self.logger.info("=" * 80 + "\n")
+        else:
+            self.logger.warning("⚠️  没有找到任何项目记录")
         
         return results
     

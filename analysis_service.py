@@ -47,7 +47,12 @@ class TravelAnalyzer:
     
     def _merge_travel_data(self) -> pd.DataFrame:
         """合并所有差旅数据"""
+        self.logger.info("=" * 80)
+        self.logger.info("开始合并差旅数据（机票、酒店、火车票）")
+        self.logger.info("=" * 80)
+        
         travel_dfs = []
+        total_amount = 0
         
         # 机票
         if self.flight_df is not None and not self.flight_df.empty:
@@ -55,7 +60,12 @@ class TravelAnalyzer:
             flight_copy['差旅类型'] = '机票'
             if '出发日期' in flight_copy.columns:
                 flight_copy['消费日期'] = flight_copy['出发日期']
+            flight_amount = flight_copy['授信金额'].sum() if '授信金额' in flight_copy.columns else 0
+            self.logger.info(f"✈️  机票数据: {len(flight_copy)}条, 总金额: ¥{flight_amount:,.2f}")
             travel_dfs.append(flight_copy)
+            total_amount += flight_amount
+        else:
+            self.logger.warning("⚠️  机票数据为空")
         
         # 酒店
         if self.hotel_df is not None and not self.hotel_df.empty:
@@ -63,7 +73,12 @@ class TravelAnalyzer:
             hotel_copy['差旅类型'] = '酒店'
             if '入住日期' in hotel_copy.columns:
                 hotel_copy['消费日期'] = hotel_copy['入住日期']
+            hotel_amount = hotel_copy['授信金额'].sum() if '授信金额' in hotel_copy.columns else 0
+            self.logger.info(f"🏨 酒店数据: {len(hotel_copy)}条, 总金额: ¥{hotel_amount:,.2f}")
             travel_dfs.append(hotel_copy)
+            total_amount += hotel_amount
+        else:
+            self.logger.warning("⚠️  酒店数据为空")
         
         # 火车票
         if self.train_df is not None and not self.train_df.empty:
@@ -71,12 +86,34 @@ class TravelAnalyzer:
             train_copy['差旅类型'] = '火车票'
             if '出发日期' in train_copy.columns:
                 train_copy['消费日期'] = train_copy['出发日期']
+            train_amount = train_copy['授信金额'].sum() if '授信金额' in train_copy.columns else 0
+            self.logger.info(f"🚄 火车票数据: {len(train_copy)}条, 总金额: ¥{train_amount:,.2f}")
             travel_dfs.append(train_copy)
+            total_amount += train_amount
+        else:
+            self.logger.warning("⚠️  火车票数据为空")
         
         if not travel_dfs:
+            self.logger.error("❌ 所有差旅数据均为空，无法合并")
             return pd.DataFrame()
         
-        return pd.concat(travel_dfs, ignore_index=True, sort=False)
+        merged_df = pd.concat(travel_dfs, ignore_index=True, sort=False)
+        
+        self.logger.info(f"\n✅ 差旅数据合并完成:")
+        self.logger.info(f"   - 总记录数: {len(merged_df)}")
+        self.logger.info(f"   - 总金额: ¥{total_amount:,.2f}")
+        
+        # 验证合并后的数据
+        if '授信金额' in merged_df.columns:
+            merged_total = merged_df['授信金额'].sum()
+            if abs(merged_total - total_amount) > 0.01:
+                self.logger.error(f"⚠️  金额验证失败！")
+                self.logger.error(f"   分类汇总: ¥{total_amount:,.2f}")
+                self.logger.error(f"   合并后总计: ¥{merged_total:,.2f}")
+        
+        self.logger.info("=" * 80 + "\n")
+        
+        return merged_df
     
     def aggregate_project_cost(self) -> pd.DataFrame:
         """
@@ -86,35 +123,107 @@ class TravelAnalyzer:
         Returns:
             项目成本汇总 DataFrame
         """
-        self.logger.debug("开始执行项目成本归集")
+        self.logger.info("=" * 80)
+        self.logger.info("开始执行项目成本归集 - 详细模式")
+        self.logger.info("=" * 80)
         
         if self.travel_df.empty:
             self.logger.warning("差旅数据为空，无法进行项目成本归集")
-            return pd.DataFrame(columns=['项目代码', '总成本', '机票成本', '酒店成本', '火车票成本', '订单数量'])
+            return pd.DataFrame(columns=['项目代码', '项目名称', '总成本', '机票成本', '酒店成本', '火车票成本', '订单数量'])
+        
+        # 输出数据总览
+        total_records = len(self.travel_df)
+        total_amount_all = self.travel_df['授信金额'].sum() if '授信金额' in self.travel_df.columns else 0
+        self.logger.info(f"📊 差旅数据总览:")
+        self.logger.info(f"   - 总记录数: {total_records}")
+        self.logger.info(f"   - 授信金额总和: ¥{total_amount_all:,.2f}")
         
         # 确保必要的列存在
         required_cols = ['项目代码', '授信金额', '差旅类型']
         for col in required_cols:
             if col not in self.travel_df.columns:
-                return pd.DataFrame(columns=['项目代码', '总成本', '机票成本', '酒店成本', '火车票成本', '订单数量'])
+                self.logger.error(f"缺少必要列: {col}")
+                return pd.DataFrame(columns=['项目代码', '项目名称', '总成本', '机票成本', '酒店成本', '火车票成本', '订单数量'])
+        
+        # 统计各差旅类型数量
+        travel_type_counts = self.travel_df['差旅类型'].value_counts().to_dict()
+        self.logger.info(f"📋 差旅类型分布:")
+        for travel_type, count in travel_type_counts.items():
+            type_amount = self.travel_df[self.travel_df['差旅类型'] == travel_type]['授信金额'].sum()
+            self.logger.info(f"   - {travel_type}: {count}条, 总金额 ¥{type_amount:,.2f}")
+        
+        # 统计项目代码分布
+        project_counts = self.travel_df['项目代码'].value_counts()
+        unknown_count = project_counts.get('未知', 0)
+        unknown_amount = self.travel_df[self.travel_df['项目代码'] == '未知']['授信金额'].sum() if unknown_count > 0 else 0
+        
+        self.logger.info(f"🏷️  项目代码统计:")
+        self.logger.info(f"   - 唯一项目数: {len(project_counts)}")
+        self.logger.info(f"   - '未知'项目记录数: {unknown_count}, 金额: ¥{unknown_amount:,.2f}")
+        if unknown_count > 0:
+            self.logger.warning(f"⚠️  发现 {unknown_count} 条'未知'项目记录，将被排除在项目成本统计外！")
         
         # 按项目代码和差旅类型分组
         project_stats = []
+        valid_project_codes = [code for code in self.travel_df['项目代码'].unique() if code != "未知"]
         
-        for project_code in self.travel_df['项目代码'].unique():
-            if project_code == "未知":
-                continue
-            
+        self.logger.info(f"\n🔍 开始逐项目分析（共 {len(valid_project_codes)} 个有效项目）:")
+        self.logger.info("=" * 80)
+        
+        for idx, project_code in enumerate(valid_project_codes, 1):
             project_data = self.travel_df[self.travel_df['项目代码'] == project_code]
             
+            # 获取项目名称（从"项目"字段提取）
+            project_name = "未命名"
+            if '项目' in project_data.columns:
+                first_project = project_data['项目'].iloc[0] if not project_data.empty else ""
+                if pd.notna(first_project) and str(first_project) != "未知":
+                    # 提取项目代码后面的名称部分
+                    project_str = str(first_project).strip()
+                    # 格式: "05010013 市场-整星..." -> "市场-整星..."
+                    parts = project_str.split(maxsplit=1)
+                    if len(parts) > 1:
+                        project_name = parts[1][:50]  # 限制长度
+            
+            # 计算各类成本
             total_cost = project_data['授信金额'].sum()
             flight_cost = project_data[project_data['差旅类型'] == '机票']['授信金额'].sum()
             hotel_cost = project_data[project_data['差旅类型'] == '酒店']['授信金额'].sum()
             train_cost = project_data[project_data['差旅类型'] == '火车票']['授信金额'].sum()
             order_count = len(project_data)
             
+            # 输出项目汇总信息
+            self.logger.info(f"\n📁 项目 #{idx}: {project_code} - {project_name}")
+            self.logger.info(f"   订单总数: {order_count}")
+            self.logger.info(f"   总成本: ¥{total_cost:,.2f}")
+            self.logger.info(f"   ├─ 机票: ¥{flight_cost:,.2f} ({len(project_data[project_data['差旅类型'] == '机票'])}单)")
+            self.logger.info(f"   ├─ 酒店: ¥{hotel_cost:,.2f} ({len(project_data[project_data['差旅类型'] == '酒店'])}单)")
+            self.logger.info(f"   └─ 火车票: ¥{train_cost:,.2f} ({len(project_data[project_data['差旅类型'] == '火车票'])}单)")
+            
+            # 输出每条记录的明细（前10条，避免日志过大）
+            self.logger.debug(f"   📝 明细记录（前10条）:")
+            for i, (_, row) in enumerate(project_data.head(10).iterrows(), 1):
+                name = row.get('差旅人员姓名', '未知')
+                travel_type = row.get('差旅类型', '未知')
+                amount = row.get('授信金额', 0)
+                date = row.get('消费日期', '未知')
+                date_str = date.strftime('%Y-%m-%d') if pd.notna(date) else '未知'
+                self.logger.debug(f"      {i}. {travel_type} | {name} | ¥{amount:,.2f} | {date_str}")
+            
+            if order_count > 10:
+                self.logger.debug(f"      ... 还有 {order_count - 10} 条记录未显示")
+            
+            # 验证成本计算
+            calculated_sum = flight_cost + hotel_cost + train_cost
+            if abs(calculated_sum - total_cost) > 0.01:  # 允许0.01的浮点误差
+                self.logger.error(f"   ⚠️  成本计算不一致！")
+                self.logger.error(f"      直接求和: ¥{total_cost:,.2f}")
+                self.logger.error(f"      分类求和: ¥{calculated_sum:,.2f}")
+                self.logger.error(f"      差异: ¥{abs(calculated_sum - total_cost):,.2f}")
+            
             project_stats.append({
                 '项目代码': project_code,
+                '项目名称': project_name,
                 '总成本': round(total_cost, 2),
                 '机票成本': round(flight_cost, 2),
                 '酒店成本': round(hotel_cost, 2),
@@ -127,12 +236,43 @@ class TravelAnalyzer:
         # 按总成本降序排序
         if not result_df.empty:
             result_df = result_df.sort_values('总成本', ascending=False).reset_index(drop=True)
-            self.logger.info(f"项目成本归集完成，共 {len(result_df)} 个项目")
-            if len(result_df) > 0:
-                top_project = result_df.iloc[0]
-                self.logger.debug(f"成本最高项目: {top_project['项目代码']}, 总成本: ¥{top_project['总成本']:,.2f}")
+            
+            # 输出最终统计
+            self.logger.info("\n" + "=" * 80)
+            self.logger.info("✅ 项目成本归集完成")
+            self.logger.info("=" * 80)
+            self.logger.info(f"📊 统计结果:")
+            self.logger.info(f"   - 有效项目数: {len(result_df)}")
+            self.logger.info(f"   - 总订单数: {result_df['订单数量'].sum()}")
+            self.logger.info(f"   - 总成本: ¥{result_df['总成本'].sum():,.2f}")
+            self.logger.info(f"   - 机票成本: ¥{result_df['机票成本'].sum():,.2f}")
+            self.logger.info(f"   - 酒店成本: ¥{result_df['酒店成本'].sum():,.2f}")
+            self.logger.info(f"   - 火车票成本: ¥{result_df['火车票成本'].sum():,.2f}")
+            
+            # 验证总成本
+            result_total = result_df['总成本'].sum()
+            original_valid_total = self.travel_df[self.travel_df['项目代码'] != '未知']['授信金额'].sum()
+            if abs(result_total - original_valid_total) > 0.01:
+                self.logger.error(f"⚠️  总成本验证失败！")
+                self.logger.error(f"   汇总结果: ¥{result_total:,.2f}")
+                self.logger.error(f"   原始数据: ¥{original_valid_total:,.2f}")
+            
+            # 输出Top 5项目
+            self.logger.info(f"\n🏆 成本Top 5项目:")
+            for i, row in result_df.head(5).iterrows():
+                self.logger.info(f"   {i+1}. {row['项目代码']} - {row['项目名称']}")
+                self.logger.info(f"      成本: ¥{row['总成本']:,.2f} | 订单: {row['订单数量']}单")
+            
+            # 如果有未知项目，再次提醒
+            if unknown_count > 0:
+                self.logger.warning(f"\n⚠️  提醒: {unknown_count}条'未知'项目记录（¥{unknown_amount:,.2f}）未计入以上统计")
+                self.logger.warning(f"   实际差旅总金额: ¥{total_amount_all:,.2f}")
+                self.logger.warning(f"   已统计金额: ¥{result_total:,.2f}")
+                self.logger.warning(f"   未统计金额: ¥{unknown_amount:,.2f}")
         else:
             self.logger.warning("项目成本归集结果为空")
+        
+        self.logger.info("=" * 80 + "\n")
         
         return result_df
     

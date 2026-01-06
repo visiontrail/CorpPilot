@@ -132,28 +132,104 @@ class DataLoader:
             self.logger.warning(f"差旅数据为空，跳过清洗（日期列: {date_column}）")
             return
         
-        self.logger.debug(f"开始清洗差旅数据（日期列: {date_column}）")
+        self.logger.info(f"=" * 60)
+        self.logger.info(f"开始清洗差旅数据（日期列: {date_column}）- 详细模式")
+        self.logger.info(f"=" * 60)
+        self.logger.info(f"原始数据行数: {len(df)}")
         
         # 清洗授信金额
         if '授信金额' in df.columns:
+            self.logger.info(f"🔧 开始清洗'授信金额'字段...")
+            
+            # 记录清洗前的统计
+            original_values = df['授信金额'].copy()
+            null_count = original_values.isna().sum()
+            self.logger.info(f"   - 空值数量: {null_count}")
+            
+            # 显示前5个原始值示例
+            self.logger.debug(f"   - 原始值示例（前5条）:")
+            for i, val in enumerate(original_values.head(5), 1):
+                self.logger.debug(f"      {i}. {repr(val)} (类型: {type(val).__name__})")
+            
+            # 执行清洗
             df['授信金额'] = df['授信金额'].apply(self._clean_amount)
+            
+            # 统计清洗结果
+            zero_count = (df['授信金额'] == 0).sum()
             total_amount = df['授信金额'].sum()
-            self.logger.debug(f"授信金额汇总: ¥{total_amount:,.2f}")
+            valid_count = len(df) - zero_count
+            
+            self.logger.info(f"   ✅ 授信金额清洗完成:")
+            self.logger.info(f"      - 总记录数: {len(df)}")
+            self.logger.info(f"      - 有效金额记录: {valid_count}")
+            self.logger.info(f"      - 零值/无效记录: {zero_count}")
+            self.logger.info(f"      - 金额总和: ¥{total_amount:,.2f}")
+            
+            if zero_count > 0:
+                self.logger.warning(f"   ⚠️  发现 {zero_count} 条金额为0的记录（可能是空值或转换失败）")
+            
+            # 显示清洗后的示例
+            self.logger.debug(f"   - 清洗后值示例（前5条）:")
+            for i, val in enumerate(df['授信金额'].head(5), 1):
+                self.logger.debug(f"      {i}. ¥{val:,.2f}")
+        else:
+            self.logger.warning(f"   ⚠️  未找到'授信金额'列")
         
         # 转换日期
         if date_column in df.columns:
+            self.logger.info(f"📅 处理日期字段: {date_column}")
             df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
             invalid_dates = df[date_column].isna().sum()
             if invalid_dates > 0:
-                self.logger.warning(f"发现 {invalid_dates} 条无效日期记录（列: {date_column}）")
+                self.logger.warning(f"   发现 {invalid_dates} 条无效日期记录")
+            else:
+                self.logger.info(f"   日期字段处理完成，全部有效")
         
         # 提取项目代码
         if '项目' in df.columns:
+            self.logger.info(f"🏷️  开始提取项目代码...")
+            
+            # 显示原始项目字段示例
+            self.logger.debug(f"   - 原始'项目'字段示例（前5条）:")
+            for i, val in enumerate(df['项目'].head(5), 1):
+                self.logger.debug(f"      {i}. {repr(val)}")
+            
+            # 执行提取
             df['项目代码'] = df['项目'].apply(self._extract_project_code)
+            
+            # 统计提取结果
             unique_projects = df['项目代码'].nunique()
-            self.logger.debug(f"提取到 {unique_projects} 个不同的项目代码")
+            unknown_count = (df['项目代码'] == '未知').sum()
+            valid_count = len(df) - unknown_count
+            
+            self.logger.info(f"   ✅ 项目代码提取完成:")
+            self.logger.info(f"      - 总记录数: {len(df)}")
+            self.logger.info(f"      - 唯一项目数: {unique_projects}")
+            self.logger.info(f"      - 有效项目记录: {valid_count}")
+            self.logger.info(f"      - '未知'项目记录: {unknown_count}")
+            
+            if unknown_count > 0:
+                unknown_amount = df[df['项目代码'] == '未知']['授信金额'].sum() if '授信金额' in df.columns else 0
+                self.logger.warning(f"   ⚠️  {unknown_count}条记录的项目代码为'未知'，金额: ¥{unknown_amount:,.2f}")
+                
+                # 显示部分未知项目的原始值
+                unknown_samples = df[df['项目代码'] == '未知']['项目'].head(5)
+                if not unknown_samples.empty:
+                    self.logger.warning(f"   未能提取的'项目'字段示例:")
+                    for i, val in enumerate(unknown_samples, 1):
+                        self.logger.warning(f"      {i}. {repr(val)}")
+            
+            # 显示提取的项目代码示例
+            project_code_counts = df['项目代码'].value_counts()
+            self.logger.debug(f"   - 项目代码分布（Top 5）:")
+            for project_code, count in project_code_counts.head(5).items():
+                project_amount = df[df['项目代码'] == project_code]['授信金额'].sum() if '授信金额' in df.columns else 0
+                self.logger.debug(f"      {project_code}: {count}单, ¥{project_amount:,.2f}")
+        else:
+            self.logger.warning(f"   ⚠️  未找到'项目'列")
         
         # 填充基础字段
+        self.logger.debug(f"🔄 填充空值字段...")
         if '预订人姓名' in df.columns:
             df['预订人姓名'] = df['预订人姓名'].fillna('未知')
         if '差旅人员姓名' in df.columns:
@@ -168,9 +244,10 @@ class DataLoader:
                 errors='coerce'
             ).fillna(0)
             avg_advance_days = df['提前预定天数'].mean()
-            self.logger.debug(f"平均提前预订天数: {avg_advance_days:.2f} 天")
+            self.logger.debug(f"   平均提前预订天数: {avg_advance_days:.2f} 天")
         
-        self.logger.info(f"差旅数据清洗完成（日期列: {date_column}）")
+        self.logger.info(f"✅ 差旅数据清洗完成（日期列: {date_column}）")
+        self.logger.info(f"=" * 60 + "\n")
     
     @staticmethod
     def _clean_amount(amount_str) -> float:
@@ -183,8 +260,14 @@ class DataLoader:
         Returns:
             清洗后的浮点数
         """
+        logger = get_logger("data_loader")
+        
         if pd.isna(amount_str):
+            logger.debug(f"金额清洗: NaN 或 None -> 0.0")
             return 0.0
+        
+        # 记录原始值
+        original = amount_str
         
         # 转为字符串
         amount_str = str(amount_str)
@@ -193,8 +276,12 @@ class DataLoader:
         cleaned = re.sub(r'[¥,\s]', '', amount_str)
         
         try:
-            return float(cleaned)
+            result = float(cleaned)
+            if result == 0.0:
+                logger.debug(f"金额清洗: {repr(original)} -> {result}")
+            return result
         except ValueError:
+            logger.warning(f"⚠️  金额转换失败: {repr(original)} -> 清洗后: {repr(cleaned)} -> 返回 0.0")
             return 0.0
     
     @staticmethod
@@ -209,16 +296,23 @@ class DataLoader:
         Returns:
             项目代码
         """
+        logger = get_logger("data_loader")
+        
         if pd.isna(project_str):
+            logger.debug(f"项目代码提取: NaN 或 None -> '未知'")
             return "未知"
         
+        original = project_str
         project_str = str(project_str).strip()
         
         # 提取空格前的数字
         match = re.match(r'^(\d+)', project_str)
         if match:
-            return match.group(1)
+            code = match.group(1)
+            logger.debug(f"项目代码提取成功: {repr(original)} -> {code}")
+            return code
         
+        logger.warning(f"⚠️  项目代码提取失败: {repr(original)} -> '未知' (不符合格式: 以数字开头)")
         return "未知"
     
     def get_merged_travel_data(self) -> pd.DataFrame:

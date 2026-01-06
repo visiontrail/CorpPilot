@@ -8,6 +8,20 @@ export interface Summary {
   total_cost: number        // 总成本
   avg_work_hours: number    // 平均工时
   anomaly_count: number     // 异常数量
+  total_orders?: number     // 订单总数
+  order_breakdown?: {
+    total?: number
+    flight?: number
+    hotel?: number
+    train?: number
+  }
+  over_standard_count?: number  // 超标订单数
+  over_standard_breakdown?: {
+    total?: number
+    flight?: number
+    hotel?: number
+    train?: number
+  }
 }
 
 // ============ 部门统计 ============
@@ -55,5 +69,3 @@ export interface UploadResponse {
   file_size: number
   sheets: string[]
 }
-
-

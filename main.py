@@ -3,7 +3,7 @@ FastAPI 主入口
 提供差旅分析 API 服务
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import tempfile
@@ -12,10 +12,12 @@ from typing import Dict
 import traceback
 import time
 import uuid
+from datetime import datetime
 
 from data_loader import DataLoader
 from analysis_service import TravelAnalyzer
 from export_service import ExcelExporter
+from ppt_export_service import PPTExporter
 from logger_config import get_logger, RequestLogger, log_exception, log_performance
 
 
@@ -305,6 +307,160 @@ async def export_with_analysis(file: UploadFile = File(...)):
                 logger.error(f"[{request_id}] 清理临时文件失败: {str(e)}")
 
 
+@app.post("/api/export-ppt")
+async def export_ppt(request: Request):
+    """
+    导出 Dashboard 数据为 PowerPoint 演示文稿
+
+    接收 JSON 格式的数据和图表，生成 PPT 文件
+
+    Request Body (JSON):
+    {
+        "dashboard_data": {...},  # Dashboard 数据
+        "charts": [
+            {"title": "部门成本分布", "image": "data:image/png;base64,..."},
+            {"title": "项目成本排名", "image": "data:image/png;base64,..."},
+            ...
+        ]
+    }
+
+    Returns:
+        PPT 文件流
+    """
+    # 生成唯一请求ID
+    request_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+
+    # 记录请求开始
+    request_logger.log_request_start(request_id, "/api/export-ppt", "dashboard_data")
+    logger.info(f"[{request_id}] 接收到 PPT 导出请求")
+
+    try:
+        # 解析请求体
+        logger.debug(f"[{request_id}] 开始解析请求体")
+        body = await request.json()
+        dashboard_data = body.get('dashboard_data', {})
+        charts = body.get('charts', [])
+
+        logger.info(f"[{request_id}] 接收到 {len(charts)} 个图表")
+
+        # 创建 PPT 导出器
+        logger.debug(f"[{request_id}] 开始创建 PPT")
+        ppt_start = time.time()
+        exporter = PPTExporter()
+
+        # 1. 创建 KPI 指标页
+        logger.debug(f"[{request_id}] 创建 KPI 指标页")
+        kpi_data = {
+            'total_cost': dashboard_data.get('kpi', {}).get('total_cost', 0),
+            'total_orders': dashboard_data.get('kpi', {}).get('total_orders', 0),
+            'anomaly_count': dashboard_data.get('kpi', {}).get('anomaly_count', 0),
+            'over_standard_count': dashboard_data.get('kpi', {}).get('over_standard_count', 0),
+            'urgent_booking_ratio': dashboard_data.get('kpi', {}).get('urgent_booking_ratio', 0)
+        }
+        exporter.create_kpi_slide(kpi_data)
+
+        # 2. 创建图表页（每个图表一页）
+        for i, chart in enumerate(charts):
+            logger.debug(f"[{request_id}] 创建图表页 {i+1}/{len(charts)}: {chart.get('title', '')}")
+            exporter.create_chart_slide(
+                title=chart.get('title', ''),
+                chart_image_base64=chart.get('image', '')
+            )
+
+        # 3. 创建部门统计表格页
+        dept_stats = dashboard_data.get('department_metrics', [])
+        if dept_stats:
+            logger.debug(f"[{request_id}] 创建部门统计表格页，共 {len(dept_stats)} 行")
+            headers = ['部门', '成本(元)', '总工时', '人员数量', '饱和度(%)']
+            rows = [
+                [
+                    d.get('一级部门', ''),
+                    d.get('总成本', 0),
+                    d.get('总工时', 0),
+                    d.get('人员数量', 0),
+                    d.get('饱和度', 0)
+                ]
+                for d in dept_stats[:20]  # 限制20行
+            ]
+            exporter.create_table_slide('部门统计详情', headers, rows)
+
+        # 4. 创建项目成本表格页
+        projects = dashboard_data.get('top_projects', [])
+        if projects:
+            logger.debug(f"[{request_id}] 创建项目成本表格页，共 {len(projects)} 行")
+            headers = ['项目代码', '项目名称', '总成本(元)', '机票成本', '酒店成本', '火车票成本']
+            rows = [
+                [
+                    p.get('项目代码', ''),
+                    p.get('项目名称', ''),
+                    p.get('总成本', 0),
+                    p.get('机票成本', 0),
+                    p.get('酒店成本', 0),
+                    p.get('火车票成本', 0)
+                ]
+                for p in projects[:20]  # 限制20行
+            ]
+            exporter.create_table_slide('项目成本详情 (Top 20)', headers, rows)
+
+        # 5. 创建异常记录表格页（限制前50条，避免PPT过大）
+        anomalies = dashboard_data.get('anomalies', [])[:50]
+        if anomalies:
+            logger.debug(f"[{request_id}] 创建异常记录表格页，共 {len(anomalies)} 行")
+            headers = ['异常类型', '姓名', '日期', '部门', '详细说明']
+            rows = [
+                [
+                    a.get('type', ''),
+                    a.get('name', ''),
+                    a.get('date', ''),
+                    a.get('dept', ''),
+                    a.get('detail', '')[:80]  # 限制说明长度
+                ]
+                for a in anomalies
+            ]
+            exporter.create_table_slide('异常记录详情 (前50条)', headers, rows)
+
+        # 导出为字节流
+        logger.debug(f"[{request_id}] 导出 PPT 到字节流")
+        output_stream = exporter.export_to_bytes()
+
+        ppt_duration = (time.time() - ppt_start) * 1000
+        logger.info(f"[{request_id}] PPT 创建完成，耗时: {ppt_duration:.2f}ms")
+        log_performance(logger, f"[{request_id}] PPT生成", ppt_duration)
+
+        # 生成输出文件名
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        # 使用 ASCII 文件名避免 header 编码问题
+        output_filename = f"CorpPilot_Report_{timestamp}.pptx"
+        logger.info(f"[{request_id}] 输出文件名: {output_filename}")
+
+        # 记录请求成功
+        total_duration = (time.time() - start_time) * 1000
+        request_logger.log_request_success(request_id, total_duration, "PPT导出成功")
+
+        # 返回文件流
+        return StreamingResponse(
+            output_stream,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={
+                "Content-Disposition": f"attachment; filename={output_filename}"
+            }
+        )
+
+    except Exception as e:
+        # 记录错误详情
+        total_duration = (time.time() - start_time) * 1000
+
+        logger.error(f"[{request_id}] PPT 导出失败: {str(e)}")
+        log_exception(logger, f"[{request_id}] 详细错误堆栈", exc_info=True)
+        request_logger.log_request_error(request_id, total_duration, str(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"PPT 导出失败: {str(e)}"
+        )
+
+
 @app.post("/api/preview")
 async def preview_data(file: UploadFile = File(...)) -> Dict:
     """
@@ -412,5 +568,4 @@ if __name__ == "__main__":
         reload=True,  # 开发模式启用热重载
         log_level="info"
     )
-
 

@@ -1,6 +1,14 @@
 """
 FastAPI 主应用入口
 """
+import sys
+from pathlib import Path
+
+# Ensure shared modules at repo root (e.g., logger_config) are importable when running from backend/
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
@@ -47,5 +55,3 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.debug
     )
-
-

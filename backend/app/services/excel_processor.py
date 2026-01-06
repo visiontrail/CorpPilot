@@ -328,6 +328,68 @@ class ExcelProcessor:
             'advance_day_distribution': advance_distribution,
             'cost_by_advance_days': sorted(cost_by_advance_list, key=lambda x: x['advance_days'])
         }
+
+    def count_over_standard_orders(self) -> Dict[str, int]:
+        """
+        统计各差旅类型的超标订单数量
+
+        业务规则：
+        - 机票：超标类型包含“超折扣”或“超时间”
+        - 酒店：按“是否超标”为“是”
+        - 火车票：按“是否超标”为“是”
+        """
+        flight_df = self.clean_travel_data('机票')
+        hotel_df = self.clean_travel_data('酒店')
+        train_df = self.clean_travel_data('火车票')
+
+        def _count_yes(df: pd.DataFrame, column: str) -> int:
+            if df.empty or column not in df.columns:
+                return 0
+            return int(df[df[column].astype(str).str.contains('是', na=False)].shape[0])
+
+        flight_over = 0
+        if not flight_df.empty:
+            if '超标类型' in flight_df.columns:
+                flight_over = int(
+                    flight_df[
+                        flight_df['超标类型']
+                        .astype(str)
+                        .str.contains('超折扣|超时间', na=False)
+                    ].shape[0]
+                )
+            elif '是否超标' in flight_df.columns:
+                flight_over = _count_yes(flight_df, '是否超标')
+
+        hotel_over = _count_yes(hotel_df, '是否超标')
+        train_over = _count_yes(train_df, '是否超标')
+
+        total = flight_over + hotel_over + train_over
+
+        return {
+            'total': int(total),
+            'flight': int(flight_over),
+            'hotel': int(hotel_over),
+            'train': int(train_over),
+        }
+
+    def count_total_orders(self) -> Dict[str, int]:
+        """
+        统计各差旅类型及总订单数
+        """
+        flight_df = self.clean_travel_data('机票')
+        hotel_df = self.clean_travel_data('酒店')
+        train_df = self.clean_travel_data('火车票')
+
+        flight = 0 if flight_df is None else int(len(flight_df))
+        hotel = 0 if hotel_df is None else int(len(hotel_df))
+        train = 0 if train_df is None else int(len(train_df))
+
+        return {
+            'total': int(flight + hotel + train),
+            'flight': flight,
+            'hotel': hotel,
+            'train': train,
+        }
     
     def calculate_department_costs(self, top_n: int = 15) -> List[Dict[str, Any]]:
         """
@@ -578,5 +640,3 @@ class ExcelProcessor:
         self.workbook.save(output_path)
         
         return output_path
-
-

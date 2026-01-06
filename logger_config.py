@@ -95,6 +95,8 @@ def get_logger(name: str) -> logging.Logger:
         return setup_logger(name, "analysis_service.log")
     elif name == "export_service":
         return setup_logger(name, "export_service.log")
+    elif name == "ppt_export_service":
+        return setup_logger(name, "ppt_export_service.log")
     else:
         return setup_logger(name, "app.log")
 

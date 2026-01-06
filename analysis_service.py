@@ -273,6 +273,45 @@ class TravelAnalyzer:
             'urgent_ratio': round(urgent_ratio, 2),
             'avg_advance_days': round(avg_advance_days, 2)
         }
+
+    def _calculate_over_standard_stats(self) -> Dict[str, int]:
+        """
+        统计各差旅类型的超标订单数量
+
+        规则：
+        - 机票：超标类型包含“超折扣”或“超时间”
+        - 酒店：是否超标为“是”
+        - 火车票：是否超标为“是”
+        """
+        def _count_yes(df: pd.DataFrame, column: str) -> int:
+            if df is None or df.empty or column not in df.columns:
+                return 0
+            return int(df[df[column].astype(str).str.contains('是', na=False)].shape[0])
+
+        flight_over = 0
+        if self.flight_df is not None and not self.flight_df.empty:
+            if '超标类型' in self.flight_df.columns:
+                flight_over = int(
+                    self.flight_df[
+                        self.flight_df['超标类型']
+                        .astype(str)
+                        .str.contains('超折扣|超时间', na=False)
+                    ].shape[0]
+                )
+            elif '是否超标' in self.flight_df.columns:
+                flight_over = _count_yes(self.flight_df, '是否超标')
+
+        hotel_over = _count_yes(self.hotel_df, '是否超标')
+        train_over = _count_yes(self.train_df, '是否超标')
+
+        total = flight_over + hotel_over + train_over
+
+        return {
+            'total': int(total),
+            'flight': int(flight_over),
+            'hotel': int(hotel_over),
+            'train': int(train_over)
+        }
     
     def calculate_department_metrics(self) -> pd.DataFrame:
         """
@@ -369,12 +408,9 @@ class TravelAnalyzer:
         total_orders = len(self.travel_df) if not self.travel_df.empty else 0
         anomaly_count = len(anomalies)
         
-        # 超标统计
-        over_standard_count = 0
-        if not self.travel_df.empty and '是否超标' in self.travel_df.columns:
-            over_standard_count = len(
-                self.travel_df[self.travel_df['是否超标'].str.contains('是', na=False)]
-            )
+        # 超标统计（按业务规则拆分）
+        over_standard_stats = self._calculate_over_standard_stats()
+        over_standard_count = over_standard_stats.get('total', 0)
         
         self.logger.info(f"Dashboard数据生成完成: 总成本=¥{total_cost:,.2f}, 订单数={total_orders}, "
                         f"异常数={anomaly_count}, 超标数={over_standard_count}")
@@ -391,6 +427,7 @@ class TravelAnalyzer:
             'top_projects': top_projects,
             'anomalies': anomalies[:100],  # 限制返回前100条异常
             'booking_behavior': booking_behavior,
+            'over_standard_breakdown': over_standard_stats,
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
     
@@ -449,5 +486,3 @@ class TravelAnalyzer:
         self.logger.info(f"{name_column}: 总计{total_count}条，展示前{top_n}条 + \"其他\"({total_count - top_n}条汇总)")
         
         return top_items
-
-

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { 
   Card, 
   Row, 
@@ -13,19 +13,21 @@ import {
   Typography,
   Divider
 } from 'antd'
-import { 
-  DollarOutlined, 
-  ClockCircleOutlined, 
+import {
+  DollarOutlined,
+  ClockCircleOutlined,
   WarningOutlined,
+  ExclamationCircleOutlined,
   DownloadOutlined,
   ReloadOutlined,
   TeamOutlined,
-  ProjectOutlined
+  ProjectOutlined,
+  FileTextOutlined
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import type { AnalysisResult, Anomaly, DepartmentStat, ProjectTop10 } from '@/types'
-import { exportResults } from '@/services/api'
+import { exportResults, exportPpt } from '@/services/api'
 
 const { Title, Text } = Typography
 
@@ -33,6 +35,13 @@ const Dashboard = () => {
   const [data, setData] = useState<AnalysisResult | null>(null)
   const [currentFile, setCurrentFile] = useState<string>('')
   const [exporting, setExporting] = useState(false)
+  const [exportingPpt, setExportingPpt] = useState(false)
+
+  // ECharts 图表引用，用于导出图片
+  const departmentCostChartRef = useRef<any>(null)
+  const projectCostChartRef = useRef<any>(null)
+  const departmentHoursChartRef = useRef<any>(null)
+  const deptHeadcountCostChartRef = useRef<any>(null)
 
   useEffect(() => {
     loadData()
@@ -46,16 +55,32 @@ const Dashboard = () => {
       try {
         const parsedData = JSON.parse(savedData)
         // 确保关键属性存在，提供默认值
+        const summary = parsedData.summary || {}
+        const safeSummary = {
+          total_cost: summary.total_cost ?? 0,
+          avg_work_hours: summary.avg_work_hours ?? 0,
+          anomaly_count: summary.anomaly_count ?? 0,
+          total_orders: summary.total_orders ?? summary.order_breakdown?.total ?? 0,
+          order_breakdown: summary.order_breakdown || {
+            total: summary.total_orders ?? 0,
+            flight: 0,
+            hotel: 0,
+            train: 0
+          },
+          over_standard_count: summary.over_standard_count ?? summary.over_standard_breakdown?.total ?? 0,
+          over_standard_breakdown: summary.over_standard_breakdown || {
+            total: 0,
+            flight: 0,
+            hotel: 0,
+            train: 0
+          }
+        }
         const safeData = {
           ...parsedData,
           department_stats: parsedData.department_stats || [],
           project_top10: parsedData.project_top10 || [],
           anomalies: parsedData.anomalies || [],
-          summary: parsedData.summary || {
-            total_cost: 0,
-            avg_work_hours: 0,
-            anomaly_count: 0
-          }
+          summary: safeSummary
         }
         setData(safeData)
       } catch (error) {
@@ -97,6 +122,59 @@ const Dashboard = () => {
     }
   }
 
+  const handleExportPpt = async () => {
+    if (!data) {
+      message.warning('暂无数据可导出')
+      return
+    }
+
+    setExportingPpt(true)
+
+    try {
+      // 1. 捕获所有图表为 base64 图片
+      const charts = []
+
+      // 获取 ECharts 实例并导出图片
+      const chartRefs = [
+        { ref: departmentCostChartRef, title: '部门成本分布' },
+        { ref: projectCostChartRef, title: '项目成本排名（Top 20）' },
+        { ref: departmentHoursChartRef, title: '部门平均工时' },
+        { ref: deptHeadcountCostChartRef, title: '部门人数与成本关系' }
+      ]
+
+      for (const { ref, title } of chartRefs) {
+        if (ref.current) {
+          const echartInstance = ref.current.getEchartsInstance()
+          const imageBase64 = echartInstance.getDataURL({
+            type: 'png',
+            pixelRatio: 2,  // 高清图片
+            backgroundColor: '#fff'
+          })
+          charts.push({ title, image: imageBase64 })
+        }
+      }
+
+      // 2. 调用 API 导出 PPT
+      const blob = await exportPpt(data, charts)
+
+      // 3. 下载文件
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `CorpPilot分析报告_${new Date().getTime()}.pptx`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      message.success('PPT 导出成功！')
+    } catch (error: any) {
+      message.error(error.message || 'PPT 导出失败')
+    } finally {
+      setExportingPpt(false)
+    }
+  }
+
   // 空状态
   if (!data || !data.department_stats || !data.project_top10 || !data.anomalies) {
     return (
@@ -111,6 +189,20 @@ const Dashboard = () => {
         </Empty>
       </div>
     )
+  }
+
+  const overStandardBreakdown = {
+    total: data.summary.over_standard_breakdown?.total ?? data.summary.over_standard_count ?? 0,
+    flight: data.summary.over_standard_breakdown?.flight ?? 0,
+    hotel: data.summary.over_standard_breakdown?.hotel ?? 0,
+    train: data.summary.over_standard_breakdown?.train ?? 0
+  }
+  const overStandardCount = data.summary.over_standard_count ?? overStandardBreakdown.total
+  const orderBreakdown = {
+    total: data.summary.order_breakdown?.total ?? data.summary.total_orders ?? 0,
+    flight: data.summary.order_breakdown?.flight ?? 0,
+    hotel: data.summary.order_breakdown?.hotel ?? 0,
+    train: data.summary.order_breakdown?.train ?? 0
   }
 
   // ============ ECharts 配置 ============
@@ -345,6 +437,48 @@ const Dashboard = () => {
     ]
   }
 
+  // 超标订单占比
+  const compliantOrders = Math.max(orderBreakdown.total - overStandardCount, 0)
+  const overStandardPieOption: EChartsOption = {
+    title: {
+      text: '超标订单占比',
+      left: 'center',
+      textStyle: {
+        fontSize: 16,
+        fontWeight: 'bold'
+      }
+    },
+    tooltip: {
+      trigger: 'item',
+      formatter: '{b}<br/>订单数: {c} ({d}%)'
+    },
+    legend: {
+      orient: 'horizontal',
+      bottom: 0
+    },
+    series: [
+      {
+        name: '订单',
+        type: 'pie',
+        radius: ['40%', '70%'],
+        avoidLabelOverlap: false,
+        itemStyle: {
+          borderRadius: 8,
+          borderColor: '#fff',
+          borderWidth: 2
+        },
+        label: {
+          show: true,
+          formatter: '{b}: {d}%'
+        },
+        data: [
+          { value: overStandardCount, name: '超标订单' },
+          { value: compliantOrders, name: '合规订单' }
+        ]
+      }
+    ]
+  }
+
   // ============ 表格列定义 ============
 
   // 部门统计表格列
@@ -487,20 +621,27 @@ const Dashboard = () => {
           <Button icon={<ReloadOutlined />} onClick={loadData}>
             刷新
           </Button>
-          <Button 
-            type="primary" 
+          <Button
+            type="primary"
             icon={<DownloadOutlined />}
             loading={exporting}
             onClick={handleExport}
           >
             导出分析结果
           </Button>
+          <Button
+            icon={<FileTextOutlined />}
+            loading={exportingPpt}
+            onClick={handleExportPpt}
+          >
+            导出 PPT
+          </Button>
         </Space>
       </Space>
 
       {/* 核心指标卡片 */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={12} lg={8}>
+        <Col xs={24} sm={12} lg={6}>
           <Card variant="borderless" hoverable>
             <Statistic
               title="总成本"
@@ -512,7 +653,7 @@ const Dashboard = () => {
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} lg={8}>
+        <Col xs={24} sm={12} lg={6}>
           <Card variant="borderless" hoverable>
             <Statistic
               title="平均工时"
@@ -524,7 +665,7 @@ const Dashboard = () => {
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} lg={8}>
+        <Col xs={24} sm={12} lg={6}>
           <Card variant="borderless" hoverable>
             <Statistic
               title="异常记录"
@@ -533,6 +674,20 @@ const Dashboard = () => {
               suffix="条"
               valueStyle={{ color: '#cf1322' }}
             />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card variant="borderless" hoverable>
+            <Statistic
+              title="超标订单"
+              value={overStandardCount}
+              prefix={<ExclamationCircleOutlined />}
+              suffix="单"
+              valueStyle={{ color: '#fa8c16' }}
+            />
+            <Text type="secondary">
+              航 {overStandardBreakdown.flight} / 酒 {overStandardBreakdown.hotel} / 火 {overStandardBreakdown.train}
+            </Text>
           </Card>
         </Col>
       </Row>
@@ -569,9 +724,10 @@ const Dashboard = () => {
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col xs={24} lg={12}>
           <Card variant="borderless" hoverable>
-            <ReactECharts 
-              option={departmentCostPieOption} 
-              style={{ height: 400 }} 
+            <ReactECharts
+              ref={departmentCostChartRef}
+              option={departmentCostPieOption}
+              style={{ height: 400 }}
               notMerge={true}
               lazyUpdate={true}
             />
@@ -579,9 +735,10 @@ const Dashboard = () => {
         </Col>
         <Col xs={24} lg={12}>
           <Card variant="borderless" hoverable>
-            <ReactECharts 
-              option={projectCostBarOption} 
-              style={{ height: 400 }} 
+            <ReactECharts
+              ref={projectCostChartRef}
+              option={projectCostBarOption}
+              style={{ height: 400 }}
               notMerge={true}
               lazyUpdate={true}
             />
@@ -593,9 +750,10 @@ const Dashboard = () => {
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col xs={24} lg={12}>
           <Card variant="borderless" hoverable>
-            <ReactECharts 
-              option={departmentHoursBarOption} 
-              style={{ height: 400 }} 
+            <ReactECharts
+              ref={departmentHoursChartRef}
+              option={departmentHoursBarOption}
+              style={{ height: 400 }}
               notMerge={true}
               lazyUpdate={true}
             />
@@ -603,9 +761,28 @@ const Dashboard = () => {
         </Col>
         <Col xs={24} lg={12}>
           <Card variant="borderless" hoverable>
-            <ReactECharts 
-              option={deptHeadcountCostScatterOption} 
-              style={{ height: 400 }} 
+            <ReactECharts
+              ref={deptHeadcountCostChartRef}
+              option={deptHeadcountCostScatterOption}
+              style={{ height: 400 }}
+              notMerge={true}
+              lazyUpdate={true}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      {/* 图表区域 - 第三行 */}
+      <Row gutter={16} style={{ marginBottom: 24 }}>
+        <Col xs={24} lg={12}>
+          <Card variant="borderless" hoverable>
+            <Space direction="vertical" size="small">
+              <Text strong>总订单：{orderBreakdown.total}</Text>
+              <Text type="warning">超标订单：{overStandardCount}</Text>
+            </Space>
+            <ReactECharts
+              option={overStandardPieOption}
+              style={{ height: 360 }}
               notMerge={true}
               lazyUpdate={true}
             />

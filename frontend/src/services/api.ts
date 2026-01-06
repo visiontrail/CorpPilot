@@ -83,7 +83,35 @@ export const exportResults = async (filePath: string): Promise<Blob> => {
       timeout: 120000, // 导出超时 2 分钟
     }
   )
-  
+
+  return response.data
+}
+
+/**
+ * 导出 Dashboard 数据为 PPT
+ * @param dashboardData Dashboard 分析数据
+ * @param charts 图表图片数组
+ * @returns PPT 文件 Blob
+ */
+export const exportPpt = async (
+  dashboardData: AnalysisResult,
+  charts: Array<{ title: string; image: string }>
+): Promise<Blob> => {
+  const response = await axios.post(
+    `${API_BASE_URL}/export-ppt`,
+    {
+      dashboard_data: dashboardData,
+      charts: charts
+    },
+    {
+      responseType: 'blob',
+      timeout: 180000, // 导出超时 3 分钟
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }
+  )
+
   return response.data
 }
 

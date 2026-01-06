@@ -1,14 +1,15 @@
 """
 API 路由定义
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import Dict, Any
 import os
 import shutil
 from datetime import datetime
 
 from app.services.excel_processor import ExcelProcessor
+from app.services.ppt_export_service import PPTExporter
 from app.models.schemas import AnalysisResult, DashboardData
 from app.config import settings
 
@@ -84,6 +85,8 @@ async def analyze_excel(file_path: str):
         anomalies = processor.cross_check_attendance_travel()
         booking_behavior = processor.analyze_booking_behavior()
         attendance_summary = processor.get_attendance_summary()
+        over_standard_stats = processor.count_over_standard_orders()
+        order_stats = processor.count_total_orders()
         
         # 计算总览数据
         total_cost = sum(item['total_cost'] for item in department_costs)
@@ -128,7 +131,11 @@ async def analyze_excel(file_path: str):
             'summary': {
                 'total_cost': round(total_cost, 2),
                 'avg_work_hours': round(avg_work_hours, 2),
-                'anomaly_count': anomaly_count
+                'anomaly_count': anomaly_count,
+                'total_orders': order_stats.get('total', 0),
+                'order_breakdown': order_stats,
+                'over_standard_count': over_standard_stats.get('total', 0),
+                'over_standard_breakdown': over_standard_stats
             },
             'department_stats': department_stats,
             'project_top10': project_top10,
@@ -178,6 +185,109 @@ async def export_results(file_path: str):
         raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
 
 
+@router.post("/export-ppt")
+async def export_ppt(request: Request):
+    """
+    导出 Dashboard 数据为 PPT
+
+    请求体:
+    {
+        "dashboard_data": {...},
+        "charts": [{"title": "...", "image": "data:image/png;base64,..."}]
+    }
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"无效的请求体: {str(e)}")
+
+    dashboard_data = body.get("dashboard_data", {}) or {}
+    charts = body.get("charts", []) or []
+
+    try:
+        exporter = PPTExporter()
+
+        # 1) KPI 概览页
+        summary = dashboard_data.get("summary", {}) or {}
+        kpi_data = {
+            "total_cost": summary.get("total_cost", 0),
+            "total_orders": summary.get("total_orders", 0),
+            "anomaly_count": summary.get("anomaly_count", 0),
+            "over_standard_count": summary.get("over_standard_count", 0),
+            "urgent_booking_ratio": summary.get("urgent_booking_ratio", 0),
+        }
+        exporter.create_kpi_slide(kpi_data)
+
+        # 2) 图表页
+        for chart in charts:
+            exporter.create_chart_slide(
+                title=chart.get("title", ""),
+                chart_image_base64=chart.get("image", ""),
+            )
+
+        # 3) 部门统计表
+        department_stats = dashboard_data.get("department_stats", []) or []
+        if department_stats:
+            headers = ["部门", "成本(元)", "平均工时", "人数"]
+            rows = [
+                [
+                    item.get("dept", ""),
+                    item.get("cost", 0),
+                    item.get("avg_hours", 0),
+                    item.get("headcount", 0),
+                ]
+                for item in department_stats[:20]
+            ]
+            exporter.create_table_slide("部门统计详情", headers, rows)
+
+        # 4) 项目成本表
+        project_top = dashboard_data.get("project_top10", []) or []
+        if project_top:
+            headers = ["项目代码", "项目名称", "总成本(元)"]
+            rows = [
+                [
+                    item.get("code", ""),
+                    item.get("name", ""),
+                    item.get("cost", 0),
+                ]
+                for item in project_top[:20]
+            ]
+            exporter.create_table_slide("项目成本详情 (Top 20)", headers, rows)
+
+        # 5) 异常记录表
+        anomalies = dashboard_data.get("anomalies", []) or []
+        if anomalies:
+            headers = ["异常类型", "姓名", "日期", "部门", "详细说明"]
+            rows = [
+                [
+                    item.get("type", ""),
+                    item.get("name", ""),
+                    item.get("date", ""),
+                    item.get("dept", ""),
+                    str(item.get("detail", ""))[:80],
+                ]
+                for item in anomalies[:50]
+            ]
+            exporter.create_table_slide("异常记录详情 (前50条)", headers, rows)
+
+        # 导出为字节流
+        output_stream = exporter.export_to_bytes()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # 使用 ASCII 文件名避免 header 编码问题
+        output_filename = f"CorpPilot_Report_{timestamp}.pptx"
+
+        return StreamingResponse(
+            output_stream,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={"Content-Disposition": f"attachment; filename={output_filename}"},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PPT 导出失败: {str(e)}")
+
+
 @router.get("/sheets/{file_path:path}")
 async def get_sheets(file_path: str):
     """
@@ -220,5 +330,3 @@ async def delete_file(file_path: str):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
-
-

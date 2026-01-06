@@ -49,7 +49,8 @@ export const uploadFile = async (file: File): Promise<ApiResponse<UploadResponse
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 60000, // 上传超时 1 分钟
+      // 上传文件可能较大，延长超时以避免 60s 限制
+      timeout: 300000, // 5 分钟
     }
   )
   

@@ -342,7 +342,7 @@ async def export_ppt(request: Request):
         dashboard_data = body.get('dashboard_data', {})
         charts = body.get('charts', [])
 
-        logger.info(f"[{request_id}] 接收到 {len(charts)} 个图表")
+        logger.info(f"[{request_id}] 接收到 {len(charts)} 个前端图表（将优先使用数据驱动的内置图表）")
 
         # 创建 PPT 导出器
         logger.debug(f"[{request_id}] 开始创建 PPT")
@@ -360,16 +360,36 @@ async def export_ppt(request: Request):
         }
         exporter.create_kpi_slide(kpi_data)
 
-        # 2. 创建图表页（每个图表一页）
+        # 2. 创建数据驱动的图表页
+        dept_stats = dashboard_data.get('department_metrics', [])
+        if dept_stats:
+            logger.debug(f"[{request_id}] 创建部门成本分布图表")
+            exporter.create_department_cost_chart(dept_stats)
+
+        projects = dashboard_data.get('top_projects', [])
+        if projects:
+            logger.debug(f"[{request_id}] 创建项目成本排名图表，共 {len(projects)} 条")
+            exporter.create_project_cost_chart(projects)
+
+        over_stats = dashboard_data.get('over_standard_breakdown', {})
+        if over_stats or kpi_data.get('total_orders'):
+            logger.debug(f"[{request_id}] 创建超标订单占比图表")
+            exporter.create_over_standard_chart(over_stats, kpi_data.get('total_orders', 0))
+
+        booking_behavior = dashboard_data.get('booking_behavior', {})
+        if booking_behavior:
+            logger.debug(f"[{request_id}] 创建预订行为占比图表")
+            exporter.create_booking_behavior_chart(booking_behavior)
+
+        # 3. 如果有前端截图图表，作为补充附加到 PPT（兼容旧流程）
         for i, chart in enumerate(charts):
-            logger.debug(f"[{request_id}] 创建图表页 {i+1}/{len(charts)}: {chart.get('title', '')}")
+            logger.debug(f"[{request_id}] 附加前端图表页 {i+1}/{len(charts)}: {chart.get('title', '')}")
             exporter.create_chart_slide(
                 title=chart.get('title', ''),
                 chart_image_base64=chart.get('image', '')
             )
 
-        # 3. 创建部门统计表格页
-        dept_stats = dashboard_data.get('department_metrics', [])
+        # 4. 创建部门统计表格页
         if dept_stats:
             logger.debug(f"[{request_id}] 创建部门统计表格页，共 {len(dept_stats)} 行")
             headers = ['部门', '成本(元)', '总工时', '人员数量', '饱和度(%)']
@@ -385,8 +405,6 @@ async def export_ppt(request: Request):
             ]
             exporter.create_table_slide('部门统计详情', headers, rows)
 
-        # 4. 创建项目成本表格页
-        projects = dashboard_data.get('top_projects', [])
         if projects:
             logger.debug(f"[{request_id}] 创建项目成本表格页，共 {len(projects)} 行")
             headers = ['项目代码', '项目名称', '总成本(元)', '机票成本', '酒店成本', '火车票成本']
@@ -568,4 +586,3 @@ if __name__ == "__main__":
         reload=True,  # 开发模式启用热重载
         log_level="info"
     )
-

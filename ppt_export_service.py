@@ -7,10 +7,15 @@ import base64
 from io import BytesIO
 from typing import Dict, List, Any
 from pptx import Presentation
+from pptx.chart.data import CategoryChartData, ChartData
+from pptx.enum.chart import (
+    XL_CHART_TYPE,
+    XL_LEGEND_POSITION,
+    XL_LABEL_POSITION
+)
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
-from PIL import Image
 from logger_config import get_logger
 
 
@@ -51,6 +56,25 @@ class PPTExporter:
         except Exception as e:
             self.logger.error(f"图片解码失败: {str(e)}")
             raise
+
+    def _add_title_slide(self, title: str, font_size: int = 32):
+        """创建带标题的空白页，返回 slide 对象"""
+        blank_layout = self.prs.slide_layouts[6]
+        slide = self.prs.slides.add_slide(blank_layout)
+
+        title_box = slide.shapes.add_textbox(
+            Inches(0.5), Inches(0.3), Inches(12.333), Inches(0.8)
+        )
+        title_frame = title_box.text_frame
+        title_frame.text = title
+        title_para = title_frame.paragraphs[0]
+        title_para.font.size = Pt(font_size)
+        title_para.font.bold = True
+        title_para.font.name = "微软雅黑"
+        title_para.font.color.rgb = RGBColor(38, 38, 38)
+        title_para.alignment = PP_ALIGN.CENTER
+
+        return slide
 
     def create_kpi_slide(self, kpi_data: Dict[str, Any]):
         """
@@ -216,6 +240,213 @@ class PPTExporter:
         except Exception as e:
             self.logger.error(f"添加图表图片失败: {str(e)}")
             raise
+
+    def create_department_cost_chart(self, dept_metrics: List[Dict[str, Any]]):
+        """
+        使用部门成本数据创建内置饼图（环形图）
+
+        Args:
+            dept_metrics: 部门指标列表，包含"一级部门"、"总成本"等字段
+        """
+        if not dept_metrics:
+            self.logger.warning("部门成本数据为空，跳过部门成本图表页")
+            return
+
+        self.logger.debug("开始创建部门成本环形图幻灯片")
+        slide = self._add_title_slide("部门成本分布", font_size=32)
+
+        # 仅取前15个部门以保持可读性
+        categories = []
+        values = []
+        for dept in dept_metrics[:15]:
+            categories.append(str(dept.get('一级部门', '未知') or '未知'))
+            values.append(float(dept.get('总成本', 0) or 0))
+
+        if not any(values):
+            self.logger.warning("部门成本数据全部为0，跳过图表绘制")
+            return
+
+        chart_data = ChartData()
+        chart_data.categories = categories
+        chart_data.add_series('部门成本', values)
+
+        chart = slide.shapes.add_chart(
+            XL_CHART_TYPE.DOUGHNUT,
+            Inches(0.5), Inches(1.2),
+            Inches(12.333), Inches(5.8),
+            chart_data
+        ).chart
+
+        chart.has_legend = True
+        chart.legend.position = XL_LEGEND_POSITION.RIGHT
+
+        plot = chart.plots[0]
+        plot.has_data_labels = True
+        data_labels = plot.data_labels
+        data_labels.show_percentage = True
+        data_labels.show_category_name = True
+        data_labels.number_format = '0%'
+        data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+        data_labels.font.size = Pt(10)
+        data_labels.font.name = "微软雅黑"
+
+        self.logger.info("部门成本环形图幻灯片创建完成")
+
+    def create_project_cost_chart(self, projects: List[Dict[str, Any]]):
+        """
+        使用项目成本数据创建横向柱状图
+
+        Args:
+            projects: 项目成本列表，包含"项目代码"、"项目名称"、"总成本"等字段
+        """
+        if not projects:
+            self.logger.warning("项目成本数据为空，跳过项目成本柱状图")
+            return
+
+        self.logger.debug("开始创建项目成本柱状图幻灯片")
+        slide = self._add_title_slide("项目成本排名（Top 20）", font_size=32)
+
+        categories = []
+        values = []
+        for project in projects[:20]:
+            code = str(project.get('项目代码', '') or '未知')
+            name = str(project.get('项目名称', '') or '')
+            label = f"{code} {name}".strip()[:40] if name else code
+            categories.append(label)
+            values.append(float(project.get('总成本', 0) or 0))
+
+        if not any(values):
+            self.logger.warning("项目成本数据全部为0，跳过图表绘制")
+            return
+
+        chart_data = CategoryChartData()
+        chart_data.categories = categories
+        chart_data.add_series('总成本', values)
+
+        chart = slide.shapes.add_chart(
+            XL_CHART_TYPE.BAR_CLUSTERED,
+            Inches(0.5), Inches(1.2),
+            Inches(12.333), Inches(5.8),
+            chart_data
+        ).chart
+
+        chart.has_legend = False
+        plot = chart.plots[0]
+        plot.has_data_labels = True
+        data_labels = plot.data_labels
+        data_labels.number_format = '#,##0'
+        data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+        data_labels.font.size = Pt(9)
+        data_labels.font.name = "微软雅黑"
+
+        category_axis = chart.category_axis
+        category_axis.tick_labels.font.size = Pt(9)
+        category_axis.tick_labels.font.name = "微软雅黑"
+
+        value_axis = chart.value_axis
+        value_axis.tick_labels.number_format = '#,##0'
+
+        self.logger.info("项目成本柱状图幻灯片创建完成")
+
+    def create_over_standard_chart(self, over_stats: Dict[str, Any], total_orders: int):
+        """
+        创建超标占比环形图
+
+        Args:
+            over_stats: 超标统计字典，包含 total/flight/hotel/train
+            total_orders: 总订单数（用于计算合规订单）
+        """
+        if over_stats is None:
+            self.logger.warning("超标统计数据为空，跳过超标占比图表")
+            return
+
+        over_total = int(over_stats.get('total', 0) or 0)
+        total_orders = int(total_orders or 0)
+        compliant = max(total_orders - over_total, 0)
+
+        # 若总订单未知但有超标数据，至少展示超标占比
+        if total_orders == 0 and over_total > 0:
+            compliant = 0
+            total_orders = over_total
+
+        if over_total == 0 and compliant == 0:
+            self.logger.warning("超标与合规订单均为0，跳过超标占比图表")
+            return
+
+        slide = self._add_title_slide("超标订单占比", font_size=32)
+
+        chart_data = ChartData()
+        chart_data.categories = ['超标订单', '合规订单']
+        chart_data.add_series('订单数', [over_total, compliant])
+
+        chart = slide.shapes.add_chart(
+            XL_CHART_TYPE.DOUGHNUT,
+            Inches(0.5), Inches(1.2),
+            Inches(12.333), Inches(5.8),
+            chart_data
+        ).chart
+
+        chart.has_legend = True
+        chart.legend.position = XL_LEGEND_POSITION.RIGHT
+
+        plot = chart.plots[0]
+        plot.has_data_labels = True
+        data_labels = plot.data_labels
+        data_labels.show_percentage = True
+        data_labels.show_category_name = True
+        data_labels.number_format = '0%'
+        data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+        data_labels.font.size = Pt(10)
+        data_labels.font.name = "微软雅黑"
+
+        self.logger.info("超标占比环形图幻灯片创建完成")
+
+    def create_booking_behavior_chart(self, booking_behavior: Dict[str, Any]):
+        """
+        创建预订行为占比环形图（紧急预订 vs 正常预订）
+
+        Args:
+            booking_behavior: 预订行为统计字典，包含 total_orders/urgent_orders
+        """
+        if not booking_behavior:
+            self.logger.warning("预订行为数据为空，跳过预订行为图表")
+            return
+
+        total_orders = int(booking_behavior.get('total_orders', 0) or 0)
+        urgent_orders = int(booking_behavior.get('urgent_orders', 0) or 0)
+        normal_orders = max(total_orders - urgent_orders, 0)
+
+        if urgent_orders == 0 and normal_orders == 0:
+            self.logger.warning("预订行为订单为0，跳过预订行为图表")
+            return
+
+        slide = self._add_title_slide("预订行为概览", font_size=32)
+
+        chart_data = ChartData()
+        chart_data.categories = ['紧急预订(≤2天)', '正常预订']
+        chart_data.add_series('订单数', [urgent_orders, normal_orders])
+
+        chart = slide.shapes.add_chart(
+            XL_CHART_TYPE.DOUGHNUT,
+            Inches(0.5), Inches(1.2),
+            Inches(12.333), Inches(5.8),
+            chart_data
+        ).chart
+
+        chart.has_legend = True
+        chart.legend.position = XL_LEGEND_POSITION.RIGHT
+
+        plot = chart.plots[0]
+        plot.has_data_labels = True
+        data_labels = plot.data_labels
+        data_labels.show_percentage = True
+        data_labels.show_category_name = True
+        data_labels.number_format = '0%'
+        data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+        data_labels.font.size = Pt(10)
+        data_labels.font.name = "微软雅黑"
+
+        self.logger.info("预订行为环形图幻灯片创建完成")
 
     def create_table_slide(self, title: str, headers: List[str], rows: List[List[Any]]):
         """

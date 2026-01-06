@@ -4,9 +4,11 @@
 """
 
 import pandas as pd
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 from datetime import datetime
 import json
+import re
+from collections import Counter
 from logger_config import get_logger
 
 
@@ -414,7 +416,7 @@ class TravelAnalyzer:
             'avg_advance_days': round(avg_advance_days, 2)
         }
 
-    def _calculate_over_standard_stats(self) -> Dict[str, int]:
+    def _calculate_over_standard_stats(self) -> Dict[str, Any]:
         """
         统计各差旅类型的超标订单数量
 
@@ -428,7 +430,29 @@ class TravelAnalyzer:
                 return 0
             return int(df[df[column].astype(str).str.contains('是', na=False)].shape[0])
 
+        def _extract_over_types(value: str) -> List[str]:
+            """提取机票的超标类型标签"""
+            if not value or pd.isna(value):
+                return []
+
+            raw = str(value)
+            tokens = []
+
+            # 常见分隔符拆分
+            for part in re.split(r'[;,，、/\\s]+', raw):
+                cleaned = part.strip()
+                if cleaned and '超' in cleaned:
+                    tokens.append(cleaned)
+
+            # 兜底关键字
+            for keyword in ['超折扣', '超时间']:
+                if keyword in raw and keyword not in tokens:
+                    tokens.append(keyword)
+
+            return tokens
+
         flight_over = 0
+        flight_over_type_counter: Counter[str] = Counter()
         if self.flight_df is not None and not self.flight_df.empty:
             if '超标类型' in self.flight_df.columns:
                 flight_over = int(
@@ -438,8 +462,18 @@ class TravelAnalyzer:
                         .str.contains('超折扣|超时间', na=False)
                     ].shape[0]
                 )
+
+                type_series = self.flight_df['超标类型'].dropna().astype(str)
+                for raw_type in type_series:
+                    for token in _extract_over_types(raw_type):
+                        flight_over_type_counter[token] += 1
+
+                if flight_over == 0 and flight_over_type_counter:
+                    flight_over = sum(flight_over_type_counter.values())
             elif '是否超标' in self.flight_df.columns:
                 flight_over = _count_yes(self.flight_df, '是否超标')
+                if flight_over > 0:
+                    flight_over_type_counter['未注明类型'] += flight_over
 
         hotel_over = _count_yes(self.hotel_df, '是否超标')
         train_over = _count_yes(self.train_df, '是否超标')
@@ -450,7 +484,8 @@ class TravelAnalyzer:
             'total': int(total),
             'flight': int(flight_over),
             'hotel': int(hotel_over),
-            'train': int(train_over)
+            'train': int(train_over),
+            'flight_over_types': {k: int(v) for k, v in flight_over_type_counter.items()}
         }
     
     def calculate_department_metrics(self) -> pd.DataFrame:

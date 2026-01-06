@@ -42,6 +42,7 @@ const Dashboard = () => {
   const projectCostChartRef = useRef<any>(null)
   const departmentHoursChartRef = useRef<any>(null)
   const deptHeadcountCostChartRef = useRef<any>(null)
+  const flightOverTypeChartRef = useRef<any>(null)
 
   useEffect(() => {
     loadData()
@@ -73,7 +74,10 @@ const Dashboard = () => {
             flight: 0,
             hotel: 0,
             train: 0
-          }
+          },
+          flight_over_type_breakdown: summary.flight_over_type_breakdown 
+            || summary.over_standard_breakdown?.flight_over_types 
+            || {}
         }
         const safeData = {
           ...parsedData,
@@ -139,7 +143,8 @@ const Dashboard = () => {
         { ref: departmentCostChartRef, title: '部门成本分布' },
         { ref: projectCostChartRef, title: '项目成本排名（Top 20）' },
         { ref: departmentHoursChartRef, title: '部门平均工时' },
-        { ref: deptHeadcountCostChartRef, title: '部门人数与成本关系' }
+        { ref: deptHeadcountCostChartRef, title: '部门人数与成本关系' },
+        { ref: flightOverTypeChartRef, title: '机票超标类型分布' }
       ]
 
       for (const { ref, title } of chartRefs) {
@@ -204,6 +209,15 @@ const Dashboard = () => {
     hotel: data.summary.order_breakdown?.hotel ?? 0,
     train: data.summary.order_breakdown?.train ?? 0
   }
+  const flightOverTypeBreakdown = data.summary.flight_over_type_breakdown || {}
+  const flightOverTypeData = Object.entries(flightOverTypeBreakdown)
+    .filter(([, value]) => value > 0)
+    .map(([name, value]) => ({
+      name,
+      value
+    }))
+    .sort((a, b) => b.value - a.value)
+  const flightOverTypeTotal = flightOverTypeData.reduce((sum, item) => sum + item.value, 0)
 
   // ============ ECharts 配置 ============
 
@@ -475,6 +489,64 @@ const Dashboard = () => {
           { value: overStandardCount, name: '超标订单' },
           { value: compliantOrders, name: '合规订单' }
         ]
+      }
+    ]
+  }
+
+  // 机票超标类型分布
+  const flightOverTypeBarOption: EChartsOption = {
+    title: {
+      text: '机票超标类型分布',
+      left: 'center',
+      textStyle: {
+        fontSize: 16,
+        fontWeight: 'bold'
+      }
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow'
+      },
+      formatter: (params: any) => {
+        const item = params[0]
+        return `${item.name}<br/>超标订单: ${item.value} 单`
+      }
+    },
+    grid: {
+      left: '5%',
+      right: '5%',
+      bottom: '5%',
+      top: 60,
+      containLabel: true
+    },
+    xAxis: {
+      type: 'value',
+      name: '订单数',
+      axisLabel: {
+        formatter: '{value} 单'
+      }
+    },
+    yAxis: {
+      type: 'category',
+      data: flightOverTypeData.map(item => item.name),
+      axisLabel: {
+        interval: 0
+      }
+    },
+    series: [
+      {
+        type: 'bar',
+        data: flightOverTypeData.map(item => item.value),
+        itemStyle: {
+          color: '#73c0de',
+          borderRadius: [0, 6, 6, 0]
+        },
+        label: {
+          show: true,
+          position: 'right',
+          formatter: (params: any) => `${params.value} 单`
+        }
       }
     ]
   }
@@ -786,6 +858,32 @@ const Dashboard = () => {
               notMerge={true}
               lazyUpdate={true}
             />
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card variant="borderless" hoverable>
+            <Space direction="vertical" size="small">
+              <Text strong>机票超标订单：{overStandardBreakdown.flight}</Text>
+              <Text type="secondary">
+                类型标签计数：{flightOverTypeTotal}（{flightOverTypeData.length} 类）
+              </Text>
+            </Space>
+            {flightOverTypeData.length > 0 ? (
+              <ReactECharts
+                ref={flightOverTypeChartRef}
+                option={flightOverTypeBarOption}
+                style={{ height: 360 }}
+                notMerge={true}
+                lazyUpdate={true}
+              />
+            ) : (
+              <div style={{ height: 360, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Empty 
+                  description="暂无机票超标类型数据" 
+                  image={Empty.PRESENTED_IMAGE_SIMPLE} 
+                />
+              </div>
+            )}
           </Card>
         </Col>
       </Row>

@@ -7,7 +7,25 @@ export const mockAnalysisResult: AnalysisResult = {
   summary: {
     total_cost: 1250000,
     avg_work_hours: 9.5,
-    anomaly_count: 42
+    anomaly_count: 42,
+    total_orders: 320,
+    order_breakdown: {
+      total: 320,
+      flight: 140,
+      hotel: 100,
+      train: 80
+    },
+    over_standard_count: 18,
+    over_standard_breakdown: {
+      total: 18,
+      flight: 10,
+      hotel: 5,
+      train: 3
+    },
+    flight_over_type_breakdown: {
+      '超折扣': 6,
+      '超时间': 4
+    }
   },
   department_stats: [
     {
@@ -162,5 +180,4 @@ export const clearMockData = () => {
   localStorage.removeItem('current_file')
   console.log('🗑️ 数据已清除')
 }
-
 

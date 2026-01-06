@@ -11,6 +11,7 @@ import re
 import os
 import sys
 from pathlib import Path
+from collections import Counter
 
 # 添加根目录到 sys.path 以导入日志模块
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -511,7 +512,7 @@ class ExcelProcessor:
             'cost_by_advance_days': sorted(cost_by_advance_list, key=lambda x: x['advance_days'])
         }
 
-    def count_over_standard_orders(self) -> Dict[str, int]:
+    def count_over_standard_orders(self) -> Dict[str, Any]:
         """
         统计各差旅类型的超标订单数量
 
@@ -529,9 +530,36 @@ class ExcelProcessor:
                 return 0
             return int(df[df[column].astype(str).str.contains('是', na=False)].shape[0])
 
+        def _extract_over_types(value: str) -> List[str]:
+            """
+            提取机票的超标类型标签
+            - 支持以空格、逗号、分号、斜杠等分隔的多标签格式
+            - 若字符串中包含已知关键字（超折扣/超时间）但未分隔，也能捕获
+            """
+            if not value or pd.isna(value):
+                return []
+
+            raw = str(value)
+            tokens = []
+
+            # 常见分隔符拆分
+            for part in re.split(r'[;,，、/\\s]+', raw):
+                cleaned = part.strip()
+                if cleaned and '超' in cleaned:
+                    tokens.append(cleaned)
+
+            # 兜底：处理未显式分隔但包含关键字的场景
+            for keyword in ['超折扣', '超时间']:
+                if keyword in raw and keyword not in tokens:
+                    tokens.append(keyword)
+
+            return tokens
+
         flight_over = 0
+        flight_over_type_counter: Counter[str] = Counter()
         if not flight_df.empty:
             if '超标类型' in flight_df.columns:
+                # 统计数量
                 flight_over = int(
                     flight_df[
                         flight_df['超标类型']
@@ -539,8 +567,20 @@ class ExcelProcessor:
                         .str.contains('超折扣|超时间', na=False)
                     ].shape[0]
                 )
+
+                # 统计类型分布
+                type_series = flight_df['超标类型'].dropna().astype(str)
+                for raw_type in type_series:
+                    for token in _extract_over_types(raw_type):
+                        flight_over_type_counter[token] += 1
+
+                # 如果有类型分布但未匹配到数量，用分布求和兜底
+                if flight_over == 0 and flight_over_type_counter:
+                    flight_over = sum(flight_over_type_counter.values())
             elif '是否超标' in flight_df.columns:
                 flight_over = _count_yes(flight_df, '是否超标')
+                if flight_over > 0:
+                    flight_over_type_counter['未注明类型'] += flight_over
 
         hotel_over = _count_yes(hotel_df, '是否超标')
         train_over = _count_yes(train_df, '是否超标')
@@ -552,6 +592,7 @@ class ExcelProcessor:
             'flight': int(flight_over),
             'hotel': int(hotel_over),
             'train': int(train_over),
+            'flight_over_types': {k: int(v) for k, v in flight_over_type_counter.items()},
         }
 
     def count_total_orders(self) -> Dict[str, int]:

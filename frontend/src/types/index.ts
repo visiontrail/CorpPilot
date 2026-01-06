@@ -22,6 +22,7 @@ export interface Summary {
     hotel?: number
     train?: number
   }
+  flight_over_type_breakdown?: Record<string, number>  // 机票超标类型分布
 }
 
 // ============ 部门统计 ============

@@ -87,6 +87,11 @@ async def analyze_excel(file_path: str):
         attendance_summary = processor.get_attendance_summary()
         over_standard_stats = processor.count_over_standard_orders()
         order_stats = processor.count_total_orders()
+        over_standard_breakdown = {
+            k: v for k, v in over_standard_stats.items() 
+            if k != 'flight_over_types'
+        }
+        flight_over_type_breakdown = over_standard_stats.get('flight_over_types', {})
         
         # 计算总览数据
         total_cost = sum(item['total_cost'] for item in department_costs)
@@ -135,7 +140,8 @@ async def analyze_excel(file_path: str):
                 'total_orders': order_stats.get('total', 0),
                 'order_breakdown': order_stats,
                 'over_standard_count': over_standard_stats.get('total', 0),
-                'over_standard_breakdown': over_standard_stats
+                'over_standard_breakdown': over_standard_breakdown,
+                'flight_over_type_breakdown': flight_over_type_breakdown
             },
             'department_stats': department_stats,
             'project_top10': project_top10,

@@ -132,5 +132,12 @@ export const deleteFile = async (filePath: string): Promise<ApiResponse> => {
   return apiClient.delete(`/files/${encodeURIComponent(filePath)}`)
 }
 
+/**
+ * 清除后端持久化数据
+ */
+export const clearData = async (): Promise<ApiResponse> => {
+  return apiClient.delete('/data')
+}
+
 // 导出 axios 实例供特殊情况使用
 export default apiClient

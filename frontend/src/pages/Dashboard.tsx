@@ -11,7 +11,8 @@ import {
   Empty,
   Space,
   Typography,
-  Divider
+  Divider,
+  Popconfirm
 } from 'antd'
 import {
   DollarOutlined,
@@ -22,12 +23,13 @@ import {
   ReloadOutlined,
   TeamOutlined,
   ProjectOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  DeleteOutlined
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import type { AnalysisResult, Anomaly, DepartmentStat, ProjectTop10 } from '@/types'
-import { exportResults, exportPpt } from '@/services/api'
+import { clearData, exportResults, exportPpt } from '@/services/api'
 
 const { Title, Text } = Typography
 
@@ -36,6 +38,7 @@ const Dashboard = () => {
   const [currentFile, setCurrentFile] = useState<string>('')
   const [exporting, setExporting] = useState(false)
   const [exportingPpt, setExportingPpt] = useState(false)
+  const [clearing, setClearing] = useState(false)
 
   // ECharts 图表引用，用于导出图片
   const departmentCostChartRef = useRef<any>(null)
@@ -177,6 +180,22 @@ const Dashboard = () => {
       message.error(error.message || 'PPT 导出失败')
     } finally {
       setExportingPpt(false)
+    }
+  }
+
+  const handleClearData = async () => {
+    setClearing(true)
+    try {
+      await clearData()
+      message.success('数据已清除，请重新上传文件')
+    } catch (error: any) {
+      message.error(error.message || '清除数据失败（本地缓存已清空）')
+    } finally {
+      localStorage.removeItem('dashboard_data')
+      localStorage.removeItem('current_file')
+      setData(null)
+      setCurrentFile('')
+      setClearing(false)
     }
   }
 
@@ -693,6 +712,17 @@ const Dashboard = () => {
           <Button icon={<ReloadOutlined />} onClick={loadData}>
             刷新
           </Button>
+          <Popconfirm
+            title="确认清除所有数据？"
+            description="将删除上传文件、导出结果并清空本地缓存，操作不可恢复。"
+            okText="确认清除"
+            cancelText="取消"
+            onConfirm={handleClearData}
+          >
+            <Button danger icon={<DeleteOutlined />} loading={clearing}>
+              清除数据
+            </Button>
+          </Popconfirm>
           <Button
             type="primary"
             icon={<DownloadOutlined />}

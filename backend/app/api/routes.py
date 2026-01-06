@@ -7,6 +7,7 @@ from typing import Dict, Any
 import os
 import shutil
 from datetime import datetime
+from pathlib import Path
 
 from app.services.excel_processor import ExcelProcessor
 from app.services.ppt_export_service import PPTExporter
@@ -336,3 +337,46 @@ async def delete_file(file_path: str):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
+
+
+@router.delete("/data")
+async def clear_all_data():
+    """
+    清除上传文件和后台生成的数据
+    """
+    upload_dir = Path(settings.upload_dir).resolve()
+    cleared_uploads = 0
+    cleared_logs = 0
+
+    try:
+        if upload_dir.exists() and upload_dir.is_dir():
+            for item in upload_dir.iterdir():
+                if item.is_file() or item.is_symlink():
+                    item.unlink(missing_ok=True)
+                    cleared_uploads += 1
+                elif item.is_dir():
+                    shutil.rmtree(item)
+                    cleared_uploads += 1
+            upload_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            project_root = Path(__file__).resolve().parents[3]
+        except IndexError:
+            project_root = Path(__file__).resolve().parent
+        log_dir = project_root / "logs"
+        if log_dir.exists() and log_dir.is_dir():
+            for log_file in log_dir.iterdir():
+                if log_file.is_file():
+                    log_file.unlink(missing_ok=True)
+                    cleared_logs += 1
+
+        return {
+            "success": True,
+            "message": "数据已清除",
+            "data": {
+                "uploads_cleared": cleared_uploads,
+                "logs_cleared": cleared_logs
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"清除数据失败: {str(e)}")

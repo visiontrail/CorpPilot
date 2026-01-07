@@ -46,9 +46,10 @@ async def upload_file(file: UploadFile = File(...)):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        # 验证文件可读性
+        # 验证文件可读性，但仅读取 Sheet 名称以提升速度
         processor = ExcelProcessor(file_path)
-        sheets = processor.load_all_sheets()
+        sheet_names = processor.get_sheet_names()
+        file_size = os.path.getsize(file_path)
         
         return AnalysisResult(
             success=True,
@@ -56,7 +57,8 @@ async def upload_file(file: UploadFile = File(...)):
             data={
                 "file_path": file_path,
                 "file_name": file.filename,
-                "sheets": list(sheets.keys()),
+                "file_size": file_size,
+                "sheets": sheet_names,
                 "upload_time": timestamp
             }
         )

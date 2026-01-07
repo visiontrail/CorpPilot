@@ -38,6 +38,23 @@ class ExcelProcessor:
             return self.sheets_data
         except Exception as e:
             raise Exception(f"读取 Excel 文件失败: {str(e)}")
+
+    def get_sheet_names(self) -> List[str]:
+        """
+        仅获取 Sheet 名称，避免读取全部数据导致耗时
+        """
+        try:
+            workbook = load_workbook(
+                self.file_path,
+                read_only=True,
+                data_only=True,
+                keep_links=False
+            )
+            sheet_names = workbook.sheetnames
+            workbook.close()
+            return sheet_names
+        except Exception as e:
+            raise Exception(f"读取 Excel Sheet 名称失败: {str(e)}")
     
     def get_sheet(self, sheet_name: str) -> Optional[pd.DataFrame]:
         """获取指定 Sheet"""

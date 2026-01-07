@@ -39,6 +39,7 @@ const { Title, Text } = Typography
 const Dashboard = () => {
   const [data, setData] = useState<AnalysisResult | null>(null)
   const [currentFile, setCurrentFile] = useState<string>('')
+  const [currentFileName, setCurrentFileName] = useState<string>('')
   const [exporting, setExporting] = useState(false)
   const [exportingPpt, setExportingPpt] = useState(false)
   const [clearing, setClearing] = useState(false)
@@ -68,6 +69,7 @@ const Dashboard = () => {
       if (result.success && result.data) {
         setData(result.data)
         setCurrentFile(upload.file_path)
+        setCurrentFileName(upload.file_name)
         localStorage.setItem('dashboard_data', JSON.stringify(result.data))
         localStorage.setItem('current_file', upload.file_path)
         localStorage.setItem('current_file_name', upload.file_name)
@@ -85,6 +87,7 @@ const Dashboard = () => {
   const loadData = () => {
     const savedData = localStorage.getItem('dashboard_data')
     const savedFile = localStorage.getItem('current_file')
+    const savedFileName = localStorage.getItem('current_file_name')
     
     if (savedData) {
       try {
@@ -129,6 +132,9 @@ const Dashboard = () => {
     
     if (savedFile) {
       setCurrentFile(savedFile)
+    }
+    if (savedFileName) {
+      setCurrentFileName(savedFileName)
     }
   }
 
@@ -215,17 +221,24 @@ const Dashboard = () => {
   }
 
   const handleClearData = async () => {
+    if (!currentFile) {
+      message.warning('暂无可清除的数据文件，请先上传并选择文件')
+      return
+    }
+
     setClearing(true)
     try {
-      await clearData()
-      message.success('数据已清除，请重新上传文件')
+      await clearData(currentFile)
+      message.success('当前数据文件已清除，请重新上传')
     } catch (error: any) {
       message.error(error.message || '清除数据失败（本地缓存已清空）')
     } finally {
       localStorage.removeItem('dashboard_data')
       localStorage.removeItem('current_file')
+      localStorage.removeItem('current_file_name')
       setData(null)
       setCurrentFile('')
+      setCurrentFileName('')
       setClearing(false)
       refreshUploads()
     }
@@ -755,13 +768,13 @@ const Dashboard = () => {
             刷新
           </Button>
           <Popconfirm
-            title="确认清除所有数据？"
-            description="将删除上传文件、导出结果并清空本地缓存，操作不可恢复。"
+            title="确认清除当前数据？"
+            description={`将删除当前数据文件${currentFileName ? `（${currentFileName}）` : ''}及其缓存，操作不可恢复。`}
             okText="确认清除"
             cancelText="取消"
             onConfirm={handleClearData}
           >
-            <Button danger icon={<DeleteOutlined />} loading={clearing}>
+            <Button danger icon={<DeleteOutlined />} loading={clearing} disabled={!currentFile}>
               清除数据
             </Button>
           </Popconfirm>

@@ -452,39 +452,48 @@ async def delete_file(file_path: str):
 
 
 @router.delete("/data")
-async def clear_all_data():
+async def clear_data(file_path: str):
     """
-    清除上传文件和后台生成的数据
+    清除指定上传文件及其记录，而非全部数据
     """
+    if not file_path:
+        raise HTTPException(status_code=400, detail="缺少需要清除的文件路径")
+
     upload_dir = Path(settings.upload_dir).resolve()
-    cleared_uploads = 0
-    cleared_logs = 0
+    target_path = Path(file_path).resolve()
+
+    if upload_dir not in target_path.parents:
+        raise HTTPException(status_code=400, detail="只能清除上传目录下的文件")
+
+    records = _load_upload_records()
+    cleared_file = False
+    removed_records = 0
 
     try:
-        if upload_dir.exists() and upload_dir.is_dir():
-            for item in upload_dir.iterdir():
-                if item.is_file() or item.is_symlink():
-                    item.unlink(missing_ok=True)
-                    cleared_uploads += 1
-                elif item.is_dir():
-                    shutil.rmtree(item)
-                    cleared_uploads += 1
-            upload_dir.mkdir(parents=True, exist_ok=True)
+        if target_path.exists():
+            if target_path.is_file() or target_path.is_symlink():
+                target_path.unlink(missing_ok=True)
+                cleared_file = True
+            elif target_path.is_dir():
+                shutil.rmtree(target_path)
+                cleared_file = True
 
-        project_root = Path(__file__).resolve().parents[2]  # backend 根目录
-        log_dir = project_root / "logs"
-        if log_dir.exists() and log_dir.is_dir():
-            for log_file in log_dir.iterdir():
-                if log_file.is_file():
-                    log_file.unlink(missing_ok=True)
-                    cleared_logs += 1
+        filtered_records = []
+        for item in records:
+            item_path = item.get("file_path")
+            if item_path and Path(item_path).resolve() == target_path:
+                removed_records += 1
+                continue
+            filtered_records.append(item)
+
+        _save_upload_records(filtered_records)
 
         return {
             "success": True,
-            "message": "数据已清除",
+            "message": "指定数据已清除",
             "data": {
-                "uploads_cleared": cleared_uploads,
-                "logs_cleared": cleared_logs
+                "file_cleared": cleared_file,
+                "records_removed": removed_records
             }
         }
     except Exception as e:

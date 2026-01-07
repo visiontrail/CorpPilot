@@ -144,8 +144,8 @@ export const deleteFile = async (filePath: string): Promise<ApiResponse> => {
 /**
  * 清除后端持久化数据
  */
-export const clearData = async (): Promise<ApiResponse> => {
-  return apiClient.delete('/data')
+export const clearData = async (filePath: string): Promise<ApiResponse> => {
+  return apiClient.delete('/data', { params: { file_path: filePath } })
 }
 
 // 导出 axios 实例供特殊情况使用

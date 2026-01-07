@@ -6,7 +6,8 @@ import axios, { AxiosInstance } from 'axios'
 import type { 
   ApiResponse, 
   AnalysisResult, 
-  UploadResponse 
+  UploadResponse,
+  UploadRecord,
 } from '@/types'
 
 // API 基础地址
@@ -67,6 +68,13 @@ export const analyzeExcel = async (filePath: string): Promise<ApiResponse<Analys
   return apiClient.post('/analyze', null, {
     params: { file_path: filePath },
   }) as Promise<ApiResponse<AnalysisResult>>
+}
+
+/**
+ * 获取已上传文件列表
+ */
+export const listUploads = async (): Promise<ApiResponse<UploadRecord[]>> => {
+  return apiClient.get('/uploads') as Promise<ApiResponse<UploadRecord[]>>
 }
 
 /**

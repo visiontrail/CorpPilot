@@ -4,6 +4,7 @@ API 路由定义
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from typing import Dict, Any
+import json
 import os
 import shutil
 import time
@@ -18,6 +19,76 @@ from app.utils.logger import get_logger
 
 router = APIRouter()
 logger = get_logger("api.routes")
+UPLOAD_RECORDS_FILE = Path(settings.upload_dir) / "upload_records.json"
+
+
+def _load_upload_records() -> list[Dict[str, Any]]:
+    """加载已上传文件的记录列表"""
+    if not UPLOAD_RECORDS_FILE.exists():
+        return []
+    try:
+        with open(UPLOAD_RECORDS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"读取上传记录失败，已忽略: {e}")
+        return []
+
+
+def _save_upload_records(records: list[Dict[str, Any]]):
+    """保存上传记录到磁盘"""
+    try:
+        UPLOAD_RECORDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(UPLOAD_RECORDS_FILE, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"保存上传记录失败: {e}")
+
+
+def _upsert_upload_record(record: Dict[str, Any]):
+    """新增或更新上传记录"""
+    records = _load_upload_records()
+    target_path = record.get("file_path")
+    updated = False
+
+    if target_path:
+        for idx, item in enumerate(records):
+            if item.get("file_path") == target_path:
+                records[idx] = {**item, **record}
+                updated = True
+                break
+
+    if not updated:
+        records.append(record)
+
+    _save_upload_records(records)
+
+
+def _mark_file_analyzed(file_path: str):
+    """标记文件已完成解析"""
+    records = _load_upload_records()
+    updated = False
+    analyzed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for item in records:
+        if item.get("file_path") == file_path:
+            item["last_analyzed_at"] = analyzed_at
+            item["parsed"] = True
+            updated = True
+            break
+
+    if not updated:
+        # 如果缺失记录，补充最小信息后保存
+        fallback_record = {
+            "file_path": file_path,
+            "file_name": Path(file_path).name,
+            "file_size": os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+            "sheets": [],
+            "upload_time": None,
+            "parsed": True,
+            "last_analyzed_at": analyzed_at,
+        }
+        records.append(fallback_record)
+
+    _save_upload_records(records)
 
 
 @router.get("/health")
@@ -28,6 +99,20 @@ async def health_check():
         "app_name": settings.app_name,
         "version": settings.app_version
     }
+
+
+@router.get("/uploads")
+async def list_uploads():
+    """
+    获取上传文件列表（所有用户可见）
+    """
+    records = _load_upload_records()
+    result = []
+    for item in records:
+        file_path = item.get("file_path", "")
+        exists = os.path.exists(file_path)
+        result.append({**item, "exists": exists})
+    return {"success": True, "data": result}
 
 
 @router.post("/upload", response_model=AnalysisResult)
@@ -53,17 +138,21 @@ async def upload_file(file: UploadFile = File(...)):
         processor = ExcelProcessor(file_path)
         sheet_names = processor.get_sheet_names()
         file_size = os.path.getsize(file_path)
-        
+        record = {
+            "file_path": file_path,
+            "file_name": file.filename,
+            "file_size": file_size,
+            "sheets": sheet_names,
+            "upload_time": timestamp,
+            "parsed": False,
+            "last_analyzed_at": None,
+        }
+        _upsert_upload_record(record)
+
         return AnalysisResult(
             success=True,
             message="文件上传成功",
-            data={
-                "file_path": file_path,
-                "file_name": file.filename,
-                "file_size": file_size,
-                "sheets": sheet_names,
-                "upload_time": timestamp
-            }
+            data=record,
         )
     
     except Exception as e:
@@ -166,6 +255,7 @@ async def analyze_excel(file_path: str):
         }
 
         logger.info(f"分析流程结束，总耗时 {time.perf_counter() - overall_start:.2f}s")
+        _mark_file_analyzed(file_path)
 
         return AnalysisResult(
             success=True,
@@ -352,6 +442,9 @@ async def delete_file(file_path: str):
     
     try:
         os.remove(file_path)
+        # 同步删除记录
+        records = [r for r in _load_upload_records() if r.get("file_path") != file_path]
+        _save_upload_records(records)
         return {"success": True, "message": "文件已删除"}
     
     except Exception as e:

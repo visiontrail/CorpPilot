@@ -65,8 +65,15 @@ export interface ApiResponse<T = any> {
 }
 
 // ============ 上传响应 ============
-export interface UploadResponse {
+export interface UploadRecord {
   file_path: string
+  file_name: string
   file_size: number
   sheets: string[]
+  upload_time?: string | null
+  parsed?: boolean
+  last_analyzed_at?: string | null
+  exists?: boolean
 }
+
+export type UploadResponse = UploadRecord

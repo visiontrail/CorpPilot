@@ -18,18 +18,21 @@ import {
   SyncOutlined,
   FileExcelOutlined
 } from '@ant-design/icons'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useOutletContext } from 'react-router-dom'
 import { uploadFile, analyzeExcel } from '@/services/api'
-import type { AnalysisResult } from '@/types'
+import type { AnalysisResult, UploadResponse, UploadRecord } from '@/types'
+import type { UploadContextValue } from '@/layouts/MainLayout'
 
 const { Dragger } = AntUpload
 const { Title, Text, Paragraph } = Typography
 
 const Upload = () => {
   const navigate = useNavigate()
+  const { refreshUploads, selectUpload } = useOutletContext<UploadContextValue>()
   const [uploading, setUploading] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [uploadedFilePath, setUploadedFilePath] = useState<string>('')
+  const [uploadedFile, setUploadedFile] = useState<UploadResponse | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [currentStep, setCurrentStep] = useState(0)
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
@@ -75,6 +78,7 @@ const Upload = () => {
       if (result.success && result.data) {
         message.success('文件上传成功！')
         setUploadedFilePath(result.data.file_path)
+        setUploadedFile(result.data)
         setCurrentStep(1)
         
         // 自动开始分析
@@ -106,6 +110,17 @@ const Upload = () => {
         message.success('数据分析完成！')
         setCurrentStep(3)
         setAnalysisResult(result.data)
+        const nextSelected: UploadRecord = uploadedFile || {
+          file_path: filePath,
+          file_name: uploadedFile?.file_name || filePath.split('/').pop() || filePath,
+          file_size: uploadedFile?.file_size || 0,
+          sheets: uploadedFile?.sheets || [],
+          upload_time: uploadedFile?.upload_time,
+          parsed: true,
+          last_analyzed_at: new Date().toISOString()
+        }
+        selectUpload(nextSelected)
+        refreshUploads()
         
         // 保存数据到 localStorage
         localStorage.setItem('dashboard_data', JSON.stringify(result.data))

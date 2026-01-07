@@ -12,7 +12,8 @@ import {
   Space,
   Typography,
   Divider,
-  Popconfirm
+  Popconfirm,
+  Spin,
 } from 'antd'
 import {
   DollarOutlined,
@@ -28,8 +29,10 @@ import {
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
-import type { AnalysisResult, Anomaly, DepartmentStat, ProjectTop10 } from '@/types'
-import { clearData, exportResults, exportPpt } from '@/services/api'
+import type { AnalysisResult, Anomaly, DepartmentStat, ProjectTop10, UploadRecord } from '@/types'
+import { analyzeExcel, clearData, exportResults, exportPpt } from '@/services/api'
+import { useOutletContext } from 'react-router-dom'
+import type { UploadContextValue } from '@/layouts/MainLayout'
 
 const { Title, Text } = Typography
 
@@ -39,6 +42,8 @@ const Dashboard = () => {
   const [exporting, setExporting] = useState(false)
   const [exportingPpt, setExportingPpt] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [loadingData, setLoadingData] = useState(false)
+  const { selectedUpload, refreshUploads } = useOutletContext<UploadContextValue>()
 
   // ECharts 图表引用，用于导出图片
   const departmentCostChartRef = useRef<any>(null)
@@ -48,8 +53,34 @@ const Dashboard = () => {
   const flightOverTypeChartRef = useRef<any>(null)
 
   useEffect(() => {
-    loadData()
-  }, [])
+    if (selectedUpload?.file_path) {
+      fetchAnalysis(selectedUpload)
+    } else {
+      loadData()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUpload?.file_path])
+
+  const fetchAnalysis = async (upload: UploadRecord) => {
+    setLoadingData(true)
+    try {
+      const result = await analyzeExcel(upload.file_path)
+      if (result.success && result.data) {
+        setData(result.data)
+        setCurrentFile(upload.file_path)
+        localStorage.setItem('dashboard_data', JSON.stringify(result.data))
+        localStorage.setItem('current_file', upload.file_path)
+        localStorage.setItem('current_file_name', upload.file_name)
+      } else {
+        message.error(result.message || '数据加载失败')
+      }
+    } catch (error: any) {
+      message.error(error.message || '数据加载失败')
+    } finally {
+      setLoadingData(false)
+      refreshUploads()
+    }
+  }
 
   const loadData = () => {
     const savedData = localStorage.getItem('dashboard_data')
@@ -196,21 +227,32 @@ const Dashboard = () => {
       setData(null)
       setCurrentFile('')
       setClearing(false)
+      refreshUploads()
     }
   }
 
   // 空状态
   if (!data || !data.department_stats || !data.project_top10 || !data.anomalies) {
     return (
+      <Spin spinning={loadingData} tip="正在加载数据">
+        <div style={{ textAlign: 'center', padding: '100px 0' }}>
+          <Empty
+            description="暂无数据，请先上传 Excel 文件进行分析"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          >
+            <Button type="primary" href="/upload">
+              立即上传
+            </Button>
+          </Empty>
+        </div>
+      </Spin>
+    )
+  }
+
+  if (loadingData) {
+    return (
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
-        <Empty
-          description="暂无数据，请先上传 Excel 文件进行分析"
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-        >
-          <Button type="primary" href="/upload">
-            立即上传
-          </Button>
-        </Empty>
+        <Spin size="large" tip="正在加载数据..." />
       </div>
     )
   }

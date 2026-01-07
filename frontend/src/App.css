@@ -118,6 +118,19 @@
   margin: 40px 0;
 }
 
+/* 侧边栏上传列表 */
+.upload-menu .ant-menu-item {
+  height: auto;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.upload-menu .ant-menu-item-selected {
+  background: #e6f4ff !important;
+}
+
 /* 分割线样式 */
 .ant-divider-horizontal.ant-divider-with-text-left {
   margin: 32px 0 24px;

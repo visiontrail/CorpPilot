@@ -167,7 +167,7 @@ const MainLayout = () => {
           <div style={{ display: 'flex', alignItems: 'center', marginRight: 40 }}>
             <RocketOutlined style={{ fontSize: 28, color: '#1890ff', marginRight: 12 }} />
             <Title level={3} style={{ color: 'white', margin: 0 }}>
-              CorpPilot
+              CostMatrix
             </Title>
           </div>
           <Menu
@@ -183,7 +183,7 @@ const MainLayout = () => {
           <Outlet context={contextValue} />
         </Content>
         <Footer style={{ textAlign: 'center', background: '#f0f2f5' }}>
-          CorpPilot © 2026 | GalaxySpace AI Team
+          CostMatrix © 2026 | GalaxySpace AI Team
         </Footer>
       </Layout>
     </Layout>

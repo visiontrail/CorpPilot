@@ -1,4 +1,4 @@
-# CorpPilot Backend
+# CostMatrix Backend
 
 FastAPI 后端服务，提供数据分析 REST API。
 
@@ -91,7 +91,7 @@ behavior = processor.analyze_booking_behavior()
 创建 `.env` 文件（已被 `.gitignore` 忽略）：
 
 ```env
-APP_NAME=CorpPilot
+APP_NAME=CostMatrix
 DEBUG=True
 ALLOWED_ORIGINS=http://localhost:5173
 UPLOAD_DIR=./uploads
@@ -125,14 +125,14 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ```ini
 [Unit]
-Description=CorpPilot Backend
+Description=CostMatrix Backend
 After=network.target
 
 [Service]
 Type=simple
 User=www-data
 WorkingDirectory=/var/www/corppilot/backend
-ExecStart=/var/www/corppilot/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+ExecStart=/var/www/costmatrix/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 Restart=always
 
 [Install]

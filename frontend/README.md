@@ -1,4 +1,4 @@
-# CorpPilot Frontend
+# CostMatrix Frontend
 
 React + Vite + Ant Design Pro 前端应用。
 
@@ -207,7 +207,7 @@ server {
     listen 80;
     server_name your-domain.com;
     
-    root /var/www/corppilot/dist;
+    root /var/www/costmatrix/dist;
     index index.html;
     
     location / {

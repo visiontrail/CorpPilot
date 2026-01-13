@@ -208,7 +208,7 @@ const Dashboard = () => {
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `CorpPilot分析报告_${new Date().getTime()}.pptx`
+      link.download = `CostMatrix分析报告_${new Date().getTime()}.pptx`
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
@@ -763,7 +763,7 @@ const Dashboard = () => {
       {/* 页面标题和操作按钮 */}
       <Space style={{ marginBottom: 24, width: '100%', justifyContent: 'space-between' }}>
         <Title level={2} style={{ margin: 0 }}>
-          CorpPilot 管理驾驶舱
+          CostMatrix 管理驾驶舱
         </Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={loadData}>

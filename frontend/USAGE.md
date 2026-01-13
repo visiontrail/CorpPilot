@@ -1,8 +1,8 @@
-# CorpPilot 前端使用指南
+# CostMatrix 前端使用指南
 
 ## 📋 项目概述
 
-CorpPilot 是一个企业管理驾驶舱前端应用，基于 React + TypeScript + Ant Design Pro + ECharts 构建，用于可视化展示企业考勤、差旅数据分析结果。
+CostMatrix 是一个企业管理驾驶舱前端应用，基于 React + TypeScript + Ant Design Pro + ECharts 构建，用于可视化展示企业考勤、差旅数据分析结果。
 
 ## 🚀 快速开始
 

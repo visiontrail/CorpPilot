@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CorpPilot is an enterprise travel cost analysis platform that processes Excel files containing attendance and travel expense data, generates analytics dashboards, and exports reports.
+CostMatrix is an enterprise travel cost analysis platform that processes Excel files containing attendance and travel expense data, generates analytics dashboards, and exports reports.
 
 ## Development Commands
 

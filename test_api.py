@@ -1,6 +1,6 @@
 """
 API 测试脚本
-用于快速测试 CorpPilot API 功能
+用于快速测试 CostMatrix API 功能
 """
 
 import requests
@@ -148,7 +148,7 @@ def test_preview(file_path: str):
 def main():
     """主测试流程"""
     print("\n" + "🚀 " + "="*48)
-    print("   CorpPilot API 测试工具")
+    print("   CostMatrix API 测试工具")
     print("="*50)
     
     # 检查命令行参数

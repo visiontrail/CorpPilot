@@ -391,7 +391,7 @@ async def export_ppt(request: Request):
         output_stream = exporter.export_to_bytes()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         # 使用 ASCII 文件名避免 header 编码问题
-        output_filename = f"CorpPilot_Report_{timestamp}.pptx"
+        output_filename = f"CostMatrix_Report_{timestamp}.pptx"
 
         return StreamingResponse(
             output_stream,

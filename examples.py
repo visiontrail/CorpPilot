@@ -1,5 +1,5 @@
 """
-CorpPilot API 使用示例
+CostMatrix API 使用示例
 演示如何在 Python 代码中调用 API
 """
 
@@ -303,7 +303,7 @@ if __name__ == "__main__":
         sys.exit(1)
     
     print("\n" + "🚀 " + "="*58)
-    print("   CorpPilot API 使用示例演示")
+    print("   CostMatrix API 使用示例演示")
     print("="*60)
     
     # 运行所有示例

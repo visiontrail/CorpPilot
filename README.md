@@ -1,8 +1,8 @@
-# CorpPilot - 企业差旅分析平台（后端 API）
+# CostMatrix - 企业差旅分析平台（后端 API）
 
 ## 📝 项目简介
 
-CorpPilot 是一个基于 FastAPI + Pandas + OpenPyXL 的企业差旅分析平台后端服务。
+CostMatrix 是一个基于 FastAPI + Pandas + OpenPyXL 的企业差旅分析平台后端服务。
 核心功能包括：
 
 - 📊 **数据分析**: 读取 Excel (.xlsx) 进行差旅成本分析
@@ -79,7 +79,7 @@ python main.py
 ```json
 {
   "status": "healthy",
-  "service": "CorpPilot API"
+  "service": "CostMatrix API"
 }
 ```
 

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "CorpPilot"
+    app_name: str = "CostMatrix"
     app_version: str = "1.0.0"
     debug: bool = True
 

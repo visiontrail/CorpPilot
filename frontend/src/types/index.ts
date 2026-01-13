@@ -1,5 +1,5 @@
 /**
- * CorpPilot 前端类型定义
+ * CostMatrix 前端类型定义
  * 完全对应后端 POST /api/analyze 的返回结构
  */
 

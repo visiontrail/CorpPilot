@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# CorpPilot API 启动脚本
+# CostMatrix API 启动脚本
 
 echo "========================================"
-echo "   CorpPilot API 启动脚本"
+echo "   CostMatrix API 启动脚本"
 echo "========================================"
 
 # 检查 Python 版本

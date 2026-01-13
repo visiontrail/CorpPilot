@@ -31,7 +31,7 @@ logger.info("=" * 80)
 
 # 创建 FastAPI 应用
 app = FastAPI(
-    title="CorpPilot - 企业差旅分析平台",
+    title="CostMatrix - 企业差旅分析平台",
     description="基于 Excel 数据的差旅成本分析与异常检测 API",
     version="1.0.0"
 )
@@ -55,7 +55,7 @@ async def root():
     """根路径，返回 API 信息"""
     logger.info("访问根路径")
     return {
-        "message": "Welcome to CorpPilot API",
+        "message": "Welcome to CostMatrix API",
         "version": "1.0.0",
         "endpoints": {
             "analyze": "/api/analyze",
@@ -71,7 +71,7 @@ async def health_check():
     logger.debug("健康检查")
     return {
         "status": "healthy",
-        "service": "CorpPilot API"
+        "service": "CostMatrix API"
     }
 
 
@@ -449,7 +449,7 @@ async def export_ppt(request: Request):
         # 生成输出文件名
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         # 使用 ASCII 文件名避免 header 编码问题
-        output_filename = f"CorpPilot_Report_{timestamp}.pptx"
+        output_filename = f"CostMatrix_Report_{timestamp}.pptx"
         logger.info(f"[{request_id}] 输出文件名: {output_filename}")
 
         # 记录请求成功

@@ -10,7 +10,7 @@ class Config:
     """应用配置类"""
     
     # API 配置
-    API_TITLE = "CorpPilot - 企业差旅分析平台"
+    API_TITLE = "CostMatrix - 企业差旅分析平台"
     API_VERSION = "1.0.0"
     API_DESCRIPTION = "基于 Excel 数据的差旅成本分析与异常检测 API"
     

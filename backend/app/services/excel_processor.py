@@ -866,7 +866,7 @@ class ExcelProcessor:
         ws = self.workbook.create_sheet(sheet_name)
         
         # 写入标题
-        ws.append(["CorpPilot 数据分析报告"])
+        ws.append(["CostMatrix 数据分析报告"])
         ws.append([f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"])
         ws.append([])
         

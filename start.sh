@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# CorpPilot 一键启动脚本
+# CostMatrix 一键启动脚本
 
-echo "🚀 Starting CorpPilot..."
+echo "🚀 Starting CostMatrix..."
 
 # 检查是否安装了 Python 和 Node.js
 command -v python3 >/dev/null 2>&1 || { echo "❌ Python3 未安装，请先安装 Python 3.8+"; exit 1; }
@@ -55,7 +55,7 @@ FRONTEND_PID=$!
 cd ..
 
 echo ""
-echo "✅ CorpPilot 已启动！"
+echo "✅ CostMatrix 已启动！"
 echo ""
 echo "📊 前端地址: http://localhost:5173"
 echo "🔌 后端地址: http://localhost:8000"

@@ -55,6 +55,7 @@ export interface ProjectDetail {
   train_count: number       // 火车票订单数
   person_count: number      // 涉及人数
   person_list: string[]     // 涉及人员列表
+  department_list?: string[]  // 涉及部门列表
   date_range: {
     start: string           // 最早日期
     end: string             // 最晚日期

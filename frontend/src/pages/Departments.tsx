@@ -311,7 +311,7 @@ const Departments = () => {
           radius: '50%',
           data: Object.entries(attendance_days_distribution).map(([name, value]) => ({
             name,
-            value,
+            value: value as number,
           })),
           emphasis: {
             itemStyle: {
@@ -458,7 +458,7 @@ const Departments = () => {
           radius: '50%',
           data: Object.entries(attendance_days_distribution).map(([name, value]) => ({
             name,
-            value,
+            value: value as number,
           })),
           emphasis: {
             itemStyle: {

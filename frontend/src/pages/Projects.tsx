@@ -20,11 +20,9 @@ import {
   ArrowLeftOutlined,
   DollarOutlined,
   UserOutlined,
-  CalendarOutlined,
   WarningOutlined,
   FileTextOutlined,
   TeamOutlined,
-  ClockCircleOutlined,
   ProjectOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
@@ -295,13 +293,6 @@ const Projects = () => {
     },
   ]
 
-  // 类型映射
-  const typeLabels: Record<string, string> = {
-    flight: '机票',
-    hotel: '酒店',
-    train: '火车票',
-  }
-
   if (!selectedUpload?.file_path) {
     return (
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
@@ -472,7 +463,7 @@ const Projects = () => {
             {selectedProject.department_list && selectedProject.department_list.length > 0 && (
               <Card size="small" title={<><TeamOutlined /> 涉及部门 ({selectedProject.department_list.length})</>}>
                 <Space wrap>
-                  {selectedProject.department_list.map((dept, idx) => (
+                  {selectedProject.department_list.map((dept: string, idx: number) => (
                     <Tag key={idx} color="purple">
                       {dept}
                     </Tag>

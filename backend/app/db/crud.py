@@ -1317,7 +1317,7 @@ def get_department_stats_by_month(db: Session, month: str, top_n: int = 15) -> L
 
     dept_stats = []
     for row in results:
-        dept_id = db.query(Department.id).filter_by(name=row.dept).scalar()
+        dept_id = db.query(Department.id).filter_by(name=row.dept).first()
 
         attendance_query = db.query(
             func.avg(AttendanceRecord.work_hours).label('avg_hours')
@@ -1327,7 +1327,7 @@ def get_department_stats_by_month(db: Session, month: str, top_n: int = 15) -> L
             AttendanceRecord.upload_id.in_(upload_ids),
             AttendanceRecord.date >= month_start,
             AttendanceRecord.date <= month_end,
-            Employee.department_id == dept_id
+            Employee.department_id == (dept_id.id if dept_id else None)
         )
 
         avg_hours_result = attendance_query.first()
@@ -1461,3 +1461,776 @@ def get_total_project_count_by_month(db: Session, month: str) -> int:
     return result or 0
 
 
+def get_dashboard_data(
+    db: Session,
+    months: Optional[List[str]] = None,
+    quarter: Optional[int] = None,
+    year: Optional[int] = None
+) -> dict:
+    """
+    Get dashboard data with optional date filters.
+    Currently supports single month filtering via the months parameter.
+    """
+    if not months or len(months) != 1:
+        raise ValueError("Currently only single month filtering is supported")
+
+    month = months[0]
+    summary = get_dashboard_summary_by_month(db, month)
+    department_stats = get_department_stats_by_month(db, month, top_n=15)
+    project_stats = get_project_stats_by_month(db, month, top_n=20)
+    anomalies = get_anomalies_by_month(db, month, limit=50)
+    total_project_count = get_total_project_count_by_month(db, month)
+
+    order_breakdown = {
+        'flight': 0,
+        'hotel': 0,
+        'train': 0
+    }
+
+    for dept in department_stats:
+        order_breakdown['flight'] += dept.get('flight_cost', 0)
+        order_breakdown['hotel'] += dept.get('hotel_cost', 0)
+        order_breakdown['train'] += dept.get('train_cost', 0)
+
+    return {
+        'summary': {
+            **summary,
+            'anomaly_count': len(anomalies),
+            'order_breakdown': order_breakdown,
+            'over_standard_breakdown': {
+                'total': summary['over_standard_count'],
+                'flight': 0,
+                'hotel': 0,
+                'train': 0
+            },
+            'flight_over_type_breakdown': {},
+            'total_project_count': total_project_count
+        },
+        'department_stats': [
+            {
+                'dept': item['dept'],
+                'cost': item['cost'],
+                'avg_hours': item['avg_hours'],
+                'headcount': item['headcount']
+            }
+            for item in department_stats
+        ],
+        'project_top10': [
+            {
+                'code': item['code'],
+                'name': item['code'],
+                'cost': item['cost']
+            }
+            for item in project_stats
+        ],
+        'anomalies': anomalies
+    }
+
+
+
+def get_department_list_from_db(
+    db: Session,
+    level: int,
+    parent: Optional[str] = None,
+    months: Optional[List[str]] = None
+) -> List[dict]:
+    """
+    Get department list from database by level and parent.
+    Supports filtering by months.
+
+    Args:
+        db: Database session
+        level: Department level (1, 2, or 3)
+        parent: Parent department name (required for level 2 and 3)
+        months: List of months to filter (YYYY-MM format)
+
+    Returns:
+        List of department items with person_count, total_cost, avg_work_hours
+    """
+    if not months or len(months) != 1:
+        raise ValueError("Currently only single month filtering is supported")
+
+    month = months[0]
+
+    # Get upload IDs for the given month
+    upload_ids = get_all_uploads_for_month(db, month)
+    if not upload_ids:
+        return []
+
+    # Determine which department level to query
+    dept_level_map = {1: 'department_id', 2: 'level2_department_id', 3: 'level3_department_id'}
+    dept_id_column = dept_level_map.get(level)
+
+    if not dept_id_column:
+        raise ValueError(f"Invalid department level: {level}")
+
+    # Build query conditions
+    where_clauses = [AttendanceRecord.upload_id.in_(upload_ids)]
+
+    # Get departments with employee count
+    dept_join_map = {
+        1: Department.id == Employee.department_id,
+        2: Department.id == Employee.level2_department_id,
+        3: Department.id == Employee.level3_department_id,
+    }
+
+    # Filter by parent department if needed
+    parent_filter = None
+    if parent:
+        parent_dept = db.query(Department).filter_by(name=parent, level=level - 1).first()
+        if parent_dept:
+            parent_id = parent_dept.id
+            # For level 2, filter by Department.parent_id matching level 1 department
+            # For level 3, filter by Department.parent_id matching level 2 department
+            parent_filter = Department.parent_id == parent_id
+
+    result = db.query(
+        Department.name.label('name'),
+        func.count(func.distinct(Employee.id)).label('person_count'),
+        func.avg(AttendanceRecord.work_hours).label('avg_work_hours')
+    ).join(
+        Employee, dept_join_map[level]
+    ).join(
+        AttendanceRecord, Employee.id == AttendanceRecord.employee_id
+    ).filter(*where_clauses)
+
+    # Add parent filter if needed
+    if parent_filter is not None:
+        result = result.filter(parent_filter)
+
+    result = result.group_by(
+        Department.name
+    ).all()
+
+    # Get travel costs for each department
+    departments = []
+    for row in result:
+        dept_name = row.name
+
+        # Query travel expenses for this department
+        travel_where = [TravelExpense.upload_id.in_(upload_ids)]
+        dept_expense_join_map = {
+            1: Department.id == Employee.department_id,
+            2: Department.id == Employee.level2_department_id,
+            3: Department.id == Employee.level3_department_id,
+        }
+
+        cost_query = db.query(
+            func.sum(TravelExpense.amount).label('total_cost')
+        ).join(
+            Employee, TravelExpense.employee_id == Employee.id
+        ).join(
+            Department, dept_expense_join_map[level]
+        ).filter(
+            Department.name == dept_name,
+            *travel_where
+        )
+
+        # Add parent filter if needed (for cost query)
+        if parent_filter is not None:
+            cost_query = cost_query.filter(parent_filter)
+
+        cost_result = cost_query.first()
+
+        total_cost = float(cost_result.total_cost or 0) if cost_result else 0.0
+
+        departments.append({
+            'name': dept_name,
+            'person_count': row.person_count or 0,
+            'total_cost': total_cost,
+            'avg_work_hours': float(row.avg_work_hours or 0)
+        })
+
+    return departments
+
+
+def get_department_details_from_db(
+    db: Session,
+    department_name: str,
+    level: int = 3,
+    months: Optional[List[str]] = None
+) -> Optional[dict]:
+    """
+    Get detailed metrics for a specific department from database.
+
+    Args:
+        db: Database session
+        department_name: Department name
+        level: Department level (1, 2, or 3)
+        months: List of months to filter (YYYY-MM format)
+
+    Returns:
+        Department detail metrics dict or None if not found
+    """
+    if not months or len(months) != 1:
+        raise ValueError("Currently only single month filtering is supported")
+
+    month = months[0]
+
+    # Get upload IDs for the given month
+    upload_ids = get_all_uploads_for_month(db, month)
+    if not upload_ids:
+        return None
+
+    # Get the department
+    dept = db.query(Department).filter_by(name=department_name).first()
+    if not dept:
+        return None
+
+    # Build query conditions based on department level
+    dept_join_map = {
+        1: Department.id == Employee.department_id,
+        2: Department.id == Employee.level2_department_id,
+        3: Department.id == Employee.level3_department_id,
+    }
+
+    where_clauses = [
+        Department.name == department_name,
+        AttendanceRecord.upload_id.in_(upload_ids)
+    ]
+
+    # Get basic statistics
+    result = db.query(
+        func.count(func.distinct(Employee.id)).label('person_count'),
+        func.avg(AttendanceRecord.work_hours).label('avg_work_hours'),
+        func.count(AttendanceRecord.id).label('total_attendance_days')
+    ).join(
+        Employee, AttendanceRecord.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(and_(*where_clauses)).first()
+
+    if not result:
+        return None
+
+    # Get workday/weekend statistics
+    workday_where = list(where_clauses) + [
+        func.extract('dow', AttendanceRecord.date).in_([0, 1, 2, 3, 4])  # Monday=0 in SQLite
+    ]
+    weekend_where = list(where_clauses) + [
+        func.extract('dow', AttendanceRecord.date).in_([5, 6])  # Saturday=5, Sunday=6
+    ]
+
+    workday_attendance = db.query(func.count(AttendanceRecord.id)).select_from(
+        AttendanceRecord
+    ).join(
+        Employee, AttendanceRecord.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(and_(*workday_where)).scalar() or 0
+
+    weekend_work_days = db.query(func.count(func.distinct(
+        func.date(AttendanceRecord.date)
+    ))).select_from(
+        AttendanceRecord
+    ).join(
+        Employee, AttendanceRecord.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(and_(*weekend_where)).scalar() or 0
+
+    weekend_attendance_count = db.query(func.count(AttendanceRecord.id)).select_from(
+        AttendanceRecord
+    ).join(
+        Employee, AttendanceRecord.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(and_(*weekend_where)).scalar() or 0
+
+    # Get late after 19:30 count
+    late_count = db.query(func.count(func.distinct(Employee.id))).select_from(
+        AttendanceRecord
+    ).join(
+        Employee, AttendanceRecord.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(
+        Department.name == department_name,
+        AttendanceRecord.is_late_after_1930 == True,
+        AttendanceRecord.upload_id.in_(upload_ids)
+    ).scalar() or 0
+
+    # Get travel cost
+    travel_where = [
+        Department.name == department_name,
+        TravelExpense.upload_id.in_(upload_ids)
+    ]
+    travel_cost = db.query(func.sum(TravelExpense.amount)).select_from(
+        TravelExpense
+    ).join(
+        Employee, TravelExpense.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(and_(*travel_where)).scalar() or 0
+
+    # Get unique travel days
+    travel_days = db.query(func.count(func.distinct(func.date(TravelExpense.date)))).select_from(
+        TravelExpense
+    ).join(
+        Employee, TravelExpense.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(and_(*travel_where)).scalar() or 0
+
+    # Get leave days (assuming status like '请假' indicates leave)
+    leave_days = db.query(func.count(func.distinct(func.date(AttendanceRecord.date)))).select_from(
+        AttendanceRecord
+    ).join(
+        Employee, AttendanceRecord.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(
+        Department.name == department_name,
+        AttendanceRecord.status.like('%请假%'),
+        AttendanceRecord.upload_id.in_(upload_ids)
+    ).scalar() or 0
+
+    # Get anomaly days
+    anomaly_days = db.query(func.count(func.distinct(func.date(Anomaly.date)))).select_from(
+        Anomaly
+    ).join(
+        Employee, Anomaly.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(
+        Department.name == department_name,
+        Anomaly.upload_id.in_(upload_ids)
+    ).scalar() or 0
+
+    # Get attendance days distribution
+    attendance_dist = {}
+    for status in ['上班', '请假', '出差', '公休日上班']:
+        count = db.query(func.count(func.distinct(func.date(AttendanceRecord.date)))).select_from(
+            AttendanceRecord
+        ).join(
+            Employee, AttendanceRecord.employee_id == Employee.id
+        ).join(
+            Department, dept_join_map[level]
+        ).filter(
+            Department.name == department_name,
+            AttendanceRecord.status.like(f'%{status}%'),
+            AttendanceRecord.upload_id.in_(upload_ids)
+        ).scalar() or 0
+        if count > 0:
+            attendance_dist[status] = count
+
+    # Get travel ranking (top 10 by travel days count)
+    travel_ranking = db.query(
+        Employee.name.label('name'),
+        func.count(func.distinct(func.date(AttendanceRecord.date))).label('travel_days')
+    ).select_from(
+        AttendanceRecord
+    ).join(
+        Employee, AttendanceRecord.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(
+        Department.name == department_name,
+        AttendanceRecord.status == '出差',
+        AttendanceRecord.upload_id.in_(upload_ids)
+    ).group_by(Employee.name).order_by(
+        func.count(func.distinct(func.date(AttendanceRecord.date))).desc()
+    ).limit(10).all()
+
+    travel_ranking_list = [
+        {'name': r.name, 'value': int(r.travel_days or 0), 'detail': f'{r.travel_days}天'}
+        for r in travel_ranking
+    ]
+
+    # Get anomaly ranking (top 10 by count)
+    anomaly_ranking = db.query(
+        Employee.name.label('name'),
+        func.count(Anomaly.id).label('value')
+    ).select_from(
+        Anomaly
+    ).join(
+        Employee, Anomaly.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(
+        Department.name == department_name,
+        Anomaly.upload_id.in_(upload_ids)
+    ).group_by(Employee.name).order_by(
+        func.count(Anomaly.id).desc()
+    ).limit(10).all()
+
+    anomaly_ranking_list = [
+        {'name': r.name, 'value': int(r.value or 0), 'detail': f'{r.value}次'}
+        for r in anomaly_ranking
+    ]
+
+    # Get longest hours ranking (top 10 by average hours)
+    longest_hours = db.query(
+        Employee.name.label('name'),
+        func.avg(AttendanceRecord.work_hours).label('avg_hours')
+    ).select_from(
+        AttendanceRecord
+    ).join(
+        Employee, AttendanceRecord.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(
+        Department.name == department_name,
+        AttendanceRecord.status == '上班',
+        AttendanceRecord.upload_id.in_(upload_ids),
+        AttendanceRecord.work_hours.isnot(None)
+    ).group_by(Employee.name).order_by(
+        func.avg(AttendanceRecord.work_hours).desc()
+    ).limit(10).all()
+
+    longest_hours_list = [
+        {'name': r.name, 'value': float(round(r.avg_hours or 0, 2)), 'detail': f'{round(r.avg_hours or 0, 2)}小时'}
+        for r in longest_hours
+    ]
+
+    # Get latest checkout ranking (top 10)
+    latest_checkout = db.query(
+        Employee.name.label('name'),
+        func.max(AttendanceRecord.latest_punch_time).label('latest_time')
+    ).select_from(
+        AttendanceRecord
+    ).join(
+        Employee, AttendanceRecord.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(
+        Department.name == department_name,
+        AttendanceRecord.upload_id.in_(upload_ids),
+        AttendanceRecord.latest_punch_time.isnot(None)
+    ).group_by(Employee.name).order_by(
+        func.max(AttendanceRecord.latest_punch_time).desc()
+    ).limit(10).all()
+
+    latest_checkout_list = [
+        {'name': r.name, 'value': 0, 'detail': r.latest_time if r.latest_time else ''}
+        for r in latest_checkout
+    ]
+
+    return {
+        'department_name': department_name,
+        'department_level': f'{level}级部门',
+        'parent_department': '',
+        'avg_work_hours': float(result.avg_work_hours or 0),
+        'workday_attendance_days': workday_attendance,
+        'weekend_work_days': weekend_work_days,
+        'weekend_attendance_count': weekend_attendance_count,
+        'late_after_1930_count': late_count,
+        'total_cost': travel_cost,
+        'travel_days': travel_days,
+        'leave_days': leave_days,
+        'anomaly_days': anomaly_days,
+        'attendance_days_distribution': attendance_dist,
+        'travel_ranking': travel_ranking_list,
+        'anomaly_ranking': anomaly_ranking_list,
+        'longest_hours_ranking': longest_hours_list,
+        'latest_checkout_ranking': latest_checkout_list
+    }
+
+
+def get_all_projects_from_db(
+    db: Session,
+    months: Optional[List[str]] = None
+) -> List[dict]:
+    """
+    Get all projects from database with optional month filtering.
+
+    Args:
+        db: Database session
+        months: List of months to filter (YYYY-MM format)
+
+    Returns:
+        List of project detail dicts
+    """
+    if not months or len(months) != 1:
+        raise ValueError("Currently only single month filtering is supported")
+
+    month = months[0]
+
+    # Get upload IDs for the given month
+    upload_ids = get_all_uploads_for_month(db, month)
+    if not upload_ids:
+        return []
+
+    project_result = db.query(
+        Project.code,
+        Project.name,
+        func.sum(TravelExpense.amount).label('total_cost'),
+        func.count(TravelExpense.id).label('record_count'),
+        func.sum(case((TravelExpense.expense_type == 'flight', TravelExpense.amount), else_=0)).label('flight_cost'),
+        func.sum(case((TravelExpense.expense_type == 'hotel', TravelExpense.amount), else_=0)).label('hotel_cost'),
+        func.sum(case((TravelExpense.expense_type == 'train', TravelExpense.amount), else_=0)).label('train_cost'),
+        func.sum(case((TravelExpense.expense_type == 'flight', 1), else_=0)).label('flight_count'),
+        func.sum(case((TravelExpense.expense_type == 'hotel', 1), else_=0)).label('hotel_count'),
+        func.sum(case((TravelExpense.expense_type == 'train', 1), else_=0)).label('train_count'),
+        func.count(func.distinct(Employee.id)).label('person_count'),
+        func.min(TravelExpense.date).label('date_start'),
+        func.max(TravelExpense.date).label('date_end'),
+        func.sum(case((TravelExpense.is_over_standard == True, 1), else_=0)).label('over_standard_count'),
+    ).join(
+        TravelExpense, Project.id == TravelExpense.project_id
+    ).join(
+        Employee, TravelExpense.employee_id == Employee.id
+    ).filter(
+        TravelExpense.upload_id.in_(upload_ids)
+    ).group_by(
+        Project.code, Project.name
+    ).order_by(
+        func.sum(TravelExpense.amount).desc()
+    ).all()
+
+    results = []
+    for row in project_result:
+        # Get person list for this project
+        persons = db.query(Employee.name).join(
+            TravelExpense, Employee.id == TravelExpense.employee_id
+        ).filter(
+            TravelExpense.project_id == row.code,
+            TravelExpense.upload_id.in_(upload_ids)
+        ).distinct().all()
+        person_list = [p.name for p in persons]
+
+        # Get department list for this project
+        departments = db.query(Department.name).join(
+            Employee, Department.id == Employee.department_id
+        ).join(
+            TravelExpense, Employee.id == TravelExpense.employee_id
+        ).filter(
+            TravelExpense.project_id == row.code,
+            TravelExpense.upload_id.in_(upload_ids)
+        ).distinct().all()
+        department_list = [d.name for d in departments]
+
+        results.append({
+            'code': row.code,
+            'name': row.name,
+            'total_cost': float(row.total_cost or 0),
+            'flight_cost': float(row.flight_cost or 0),
+            'hotel_cost': float(row.hotel_cost or 0),
+            'train_cost': float(row.train_cost or 0),
+            'flight_count': int(row.flight_count or 0),
+            'hotel_count': int(row.hotel_count or 0),
+            'train_count': int(row.train_count or 0),
+            'record_count': row.record_count or 0,
+            'person_count': row.person_count or 0,
+            'date_range': {
+                'start': row.date_start.strftime('%Y-%m-%d') if row.date_start else '',
+                'end': row.date_end.strftime('%Y-%m-%d') if row.date_end else ''
+            },
+            'over_standard_count': row.over_standard_count or 0,
+            'person_list': person_list,
+            'department_list': department_list
+        })
+
+    return results
+
+
+def get_level1_department_statistics_from_db(
+    db: Session,
+    level1_name: str,
+    months: Optional[List[str]] = None
+) -> dict:
+    """
+    Get aggregated statistics for level 1 department from database.
+
+    Args:
+        db: Database session
+        level1_name: Level 1 department name
+        months: List of months to filter (YYYY-MM format)
+
+    Returns:
+        Dictionary containing aggregated statistics
+    """
+    if not months or len(months) != 1:
+        raise ValueError("Currently only single month filtering is supported")
+
+    month = months[0]
+
+    # Get upload IDs for the given month
+    upload_ids = get_all_uploads_for_month(db, month)
+    if not upload_ids:
+        return {}
+
+    # Get the level 1 department
+    level1_dept = db.query(Department).filter_by(name=level1_name, level=1).first()
+    if not level1_dept:
+        return {}
+
+    # Get all level 2 departments under this level 1
+    level2_depts = db.query(Department).filter_by(level=2, parent_id=level1_dept.id).all()
+    level2_dept_ids = [d.id for d in level2_depts]
+
+    if not level2_dept_ids:
+        return {}
+
+    # Query 1: Total travel cost for the level 1 department (aggregating all level 2 departments)
+    total_cost = db.query(func.sum(TravelExpense.amount)).join(
+        Employee, TravelExpense.employee_id == Employee.id
+    ).filter(
+        Employee.level2_department_id.in_(level2_dept_ids),
+        TravelExpense.upload_id.in_(upload_ids)
+    ).scalar() or 0
+
+    # Query 2: Attendance status distribution for all level 2 departments
+    attendance_dist = db.query(
+        AttendanceRecord.status,
+        func.count(func.distinct(func.date(AttendanceRecord.date))).label('count')
+    ).join(Employee, AttendanceRecord.employee_id == Employee.id).filter(
+        Employee.level2_department_id.in_(level2_dept_ids),
+        AttendanceRecord.upload_id.in_(upload_ids)
+    ).group_by(AttendanceRecord.status).all()
+
+    attendance_days_distribution = {row.status: row.count for row in attendance_dist}
+
+    # Query 3: Travel ranking (Top 10 by person)
+    travel_ranking_query = text("""
+    SELECT e.name, COUNT(DISTINCT DATE(a.date)) as travel_days
+    FROM fact_attendance a
+    JOIN dim_employee e ON a.employee_id = e.id
+    WHERE e.level2_department_id IN :dept_ids AND a.upload_id IN :upload_ids
+      AND a.status = '出差'
+    GROUP BY e.name
+    ORDER BY travel_days DESC
+    LIMIT 10
+    """).bindparams(bindparam('dept_ids', expanding=True), bindparam('upload_ids', expanding=True))
+
+    travel_ranking = [
+        {'name': row.name, 'value': int(row.travel_days or 0), 'detail': f'{row.travel_days}天'}
+        for row in db.execute(travel_ranking_query, {'dept_ids': level2_dept_ids, 'upload_ids': upload_ids})
+    ]
+
+    # Query 4: Average hours ranking (Top 10 by person)
+    hours_ranking_query = text("""
+    SELECT e.name, AVG(a.work_hours) as avg_hours
+    FROM fact_attendance a
+    JOIN dim_employee e ON a.employee_id = e.id
+    WHERE e.level2_department_id IN :dept_ids AND a.upload_id IN :upload_ids
+      AND a.status = '上班' AND a.work_hours IS NOT NULL
+    GROUP BY e.name
+    ORDER BY avg_hours DESC
+    LIMIT 10
+    """).bindparams(bindparam('dept_ids', expanding=True), bindparam('upload_ids', expanding=True))
+
+    avg_hours_ranking = [
+        {'name': row.name, 'value': round(float(row.avg_hours or 0), 2), 'detail': f'{row.avg_hours:.2f}小时'}
+        for row in db.execute(hours_ranking_query, {'dept_ids': level2_dept_ids, 'upload_ids': upload_ids})
+    ]
+
+    # Query 5: Level 2 department stats (batch query with GROUP BY)
+    level2_stats_query = text("""
+    SELECT
+        d.name as name,
+        COUNT(DISTINCT e.id) as person_count,
+        AVG(CASE WHEN a.status = '上班' AND a.work_hours IS NOT NULL THEN a.work_hours END) as avg_work_hours,
+        COUNT(DISTINCT CASE WHEN a.status = '上班' THEN DATE(a.date) END) as workday_attendance_days,
+        COUNT(DISTINCT CASE WHEN a.status = '公休日上班' THEN DATE(a.date) END) as weekend_work_days,
+        COUNT(CASE WHEN a.status IN ('上班', '出差') AND strftime('%w', a.date) IN ('0', '6') THEN 1 END) as weekend_attendance_count,
+        COUNT(DISTINCT CASE WHEN a.status = '出差' THEN DATE(a.date) END) as travel_days,
+        COUNT(DISTINCT CASE WHEN a.status LIKE '%请假%' THEN DATE(a.date) END) as leave_days,
+        COUNT(DISTINCT CASE WHEN an.anomaly_type = 'A' THEN DATE(an.date) END) as anomaly_days,
+        COUNT(DISTINCT CASE WHEN a.is_late_after_1930 = 1 THEN e.id END) as late_after_1930_count,
+        COALESCE(SUM(t.amount), 0) as total_cost
+    FROM dim_department d
+    JOIN dim_employee e ON e.level2_department_id = d.id
+    LEFT JOIN fact_attendance a ON a.employee_id = e.id AND a.upload_id IN :upload_ids
+    LEFT JOIN anomalies an ON an.employee_id = e.id AND an.upload_id IN :upload_ids
+    LEFT JOIN fact_travel_expense t ON t.employee_id = e.id AND t.upload_id IN :upload_ids
+    WHERE d.id IN :dept_ids
+    GROUP BY d.id
+    ORDER BY total_cost DESC
+    """).bindparams(bindparam('dept_ids', expanding=True), bindparam('upload_ids', expanding=True))
+
+    level2_department_stats = [
+        {
+            'name': row.name,
+            'person_count': row.person_count or 0,
+            'avg_work_hours': round(float(row.avg_work_hours or 0), 2),
+            'workday_attendance_days': row.workday_attendance_days or 0,
+            'weekend_work_days': row.weekend_work_days or 0,
+            'weekend_attendance_count': row.weekend_attendance_count or 0,
+            'travel_days': row.travel_days or 0,
+            'leave_days': row.leave_days or 0,
+            'anomaly_days': row.anomaly_days or 0,
+            'late_after_1930_count': row.late_after_1930_count or 0,
+            'total_cost': round(float(row.total_cost or 0), 2)
+        }
+        for row in db.execute(level2_stats_query, {'dept_ids': level2_dept_ids, 'upload_ids': upload_ids})
+    ]
+
+    return {
+        'department_name': level1_name,
+        'total_travel_cost': round(float(total_cost), 2),
+        'attendance_days_distribution': attendance_days_distribution,
+        'travel_ranking': travel_ranking,
+        'avg_hours_ranking': avg_hours_ranking,
+        'level2_department_stats': level2_department_stats
+    }
+
+
+def get_project_orders_from_db(
+    db: Session,
+    project_code: str,
+    months: Optional[List[str]] = None
+) -> List[dict]:
+    """
+    Get all order records for a specific project from database.
+
+    Args:
+        db: Database session
+        project_code: Project code
+        months: List of months to filter (YYYY-MM format)
+
+    Returns:
+        List of order record dicts
+    """
+    if not months or len(months) != 1:
+        raise ValueError("Currently only single month filtering is supported")
+
+    month = months[0]
+
+    # Get upload IDs for the given month
+    upload_ids = get_all_uploads_for_month(db, month)
+    if not upload_ids:
+        return []
+
+    result = db.query(
+        TravelExpense.id.label('id'),
+        Project.code.label('project_code'),
+        Project.name.label('project_name'),
+        Employee.name.label('person'),
+        Department.name.label('department'),
+        TravelExpense.expense_type.label('type'),
+        TravelExpense.amount.label('amount'),
+        TravelExpense.date.label('date'),
+        TravelExpense.is_over_standard.label('is_over_standard'),
+        TravelExpense.over_type.label('over_type'),
+        TravelExpense.advance_days.label('advance_days'),
+    ).join(
+        Project, TravelExpense.project_id == Project.id
+    ).join(
+        Employee, TravelExpense.employee_id == Employee.id
+    ).join(
+        Department, Employee.department_id == Department.id
+    ).filter(
+        TravelExpense.upload_id.in_(upload_ids),
+        Project.code == project_code
+    ).order_by(
+        TravelExpense.date.desc()
+    ).all()
+
+    records = []
+    for row in result:
+        records.append({
+            'id': str(row.id),
+            'project_code': row.project_code,
+            'project_name': row.project_name,
+            'person': row.person,
+            'department': row.department,
+            'type': row.type,
+            'amount': float(row.amount),
+            'date': row.date.strftime('%Y-%m-%d') if row.date else '',
+            'is_over_standard': bool(row.is_over_standard),
+            'over_type': row.over_type or '',
+            'advance_days': row.advance_days
+        })
+
+    return records

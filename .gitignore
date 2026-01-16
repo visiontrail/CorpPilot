@@ -20,6 +20,10 @@ wheels/
 .installed.cfg
 *.egg
 
+# Dependencies hash files
+.backend_deps_hash
+.frontend_deps_hash
+
 # Virtual Environment
 venv/
 env/

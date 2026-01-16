@@ -1,7 +1,7 @@
 """
 API 路由定义
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends, Query, Path
 from fastapi.responses import FileResponse, StreamingResponse
 from typing import Dict, Any, Optional
 import json
@@ -119,23 +119,22 @@ async def list_uploads():
 
 
 @router.get("/months")
-async def get_available_months():
+async def get_available_months(db: Session = Depends(get_db)):
     """
-    获取所有上传文件中的可用月份列表
+    获取所有上传文件中的可用月份列表（从数据库获取）
     """
     try:
-        records = _load_upload_records()
+        from app.db.crud import get_available_months
+        from app.db.models import Upload
+
+        # 获取所有已上传的文件
+        uploads = db.query(Upload).all()
         all_months = set()
 
-        for record in records:
-            file_path = record.get("file_path")
-            if file_path and os.path.exists(file_path):
-                try:
-                    processor = ExcelProcessor(file_path)
-                    months = processor.get_available_months()
-                    all_months.update(months)
-                except Exception as e:
-                    logger.warning(f"获取文件 {file_path} 的月份失败: {e}")
+        for upload in uploads:
+            # 从数据库获取该文件的所有月份
+            months = get_available_months(db, upload.file_path)
+            all_months.update(months)
 
         return {
             "success": True,
@@ -200,12 +199,52 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
 
 
 @router.post("/analyze", response_model=AnalysisResult)
-async def analyze_excel(file_path: str):
+async def analyze_excel(
+    file_path: Optional[str] = Query(None, description="文件路径（可选，如果不提供则从数据库读取）"),
+    months: Optional[str] = Query(None, description="月份列表，逗号分隔 (例如: 2025-01,2025-02)"),
+    quarter: Optional[int] = Query(None, description="季度 (1, 2, 3, 4)"),
+    year: Optional[int] = Query(None, description="年份")
+):
     """
     分析 Excel 文件，返回完整的 Dashboard 数据
+    支持按月份、季度、年份筛选数据
     """
+    months_list = None
+    if months:
+        months_list = [m.strip() for m in months.split(',') if m.strip()]
+
+    if not file_path:
+        if not (months_list or quarter or year):
+            raise HTTPException(status_code=400, detail="未指定文件路径时，必须提供 months、quarter 或 year 参数")
+
+        try:
+            from app.db.crud import get_dashboard_data
+            from app.db.database import get_db
+
+            db_gen = get_db()
+            db = next(db_gen)
+
+            dashboard_data = get_dashboard_data(
+                db=db,
+                months=months_list,
+                quarter=quarter,
+                year=year
+            )
+
+            return AnalysisResult(
+                success=True,
+                message="分析完成",
+                data=dashboard_data
+            )
+        except Exception as e:
+            logger.exception(f"数据库分析失败: {e}")
+            raise HTTPException(status_code=500, detail=f"数据库分析失败: {str(e)}")
+
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="文件不存在")
+
+    if months_list or quarter or year:
+        logger.warning(f"Excel 文件分析暂不支持月份过滤，将返回全部数据。参数: months={months_list}, quarter={quarter}, year={year}")
     
     try:
         logger.info(f"开始分析文件: {file_path}")
@@ -539,10 +578,44 @@ async def clear_data(file_path: str):
 
 
 @router.get("/projects")
-async def get_all_projects(file_path: str):
+async def get_all_projects(
+    file_path: Optional[str] = Query(None, description="文件路径（可选，不提供则从数据库读取）"),
+    months: Optional[str] = Query(None, description="月份列表，逗号分隔 (例如: 2025-01,2025-02)"),
+    db: Session = Depends(get_db)
+):
     """
     获取所有项目的详细信息
+
+    支持从Excel文件或数据库获取数据
+
+    Args:
+        file_path: Excel 文件路径（可选）
+        months: 月份列表（数据库模式下使用）
     """
+    # 如果没有提供file_path，从数据库获取
+    if not file_path:
+        if not months:
+            raise HTTPException(status_code=400, detail="数据库模式下必须提供months参数")
+
+        try:
+            from app.db.crud import get_all_projects_from_db
+
+            months_list = [m.strip() for m in months.split(',') if m.strip()]
+            project_details = get_all_projects_from_db(db, months_list)
+
+            return AnalysisResult(
+                success=True,
+                message="获取项目详情成功",
+                data={
+                    "projects": project_details,
+                    "total_count": len(project_details)
+                }
+            )
+        except Exception as e:
+            logger.exception(f"从数据库获取项目详情失败: {e}")
+            raise HTTPException(statusatus_code=500, detail=f"获取项目详情失败: {str(e)}")
+
+    # 从Excel文件获取
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="文件不存在")
 
@@ -567,10 +640,47 @@ async def get_all_projects(file_path: str):
 
 
 @router.get("/projects/{project_code}/orders")
-async def get_project_orders(file_path: str, project_code: str):
+async def get_project_orders(
+    project_code: str,
+    file_path: Optional[str] = Query(None, description="文件路径（可选，不提供则从数据库读取）"),
+    months: Optional[str] = Query(None, description="月份列表，逗号分隔 (例如: 2025-01,2025-02)"),
+    db: Session = Depends(get_db)
+):
     """
     获取指定项目的所有订单记录
+
+    支持从Excel文件或数据库获取数据
+
+    Args:
+        file_path: Excel 文件路径（可选）
+        project_code: 项目代码
+        months: 月份列表（数据库模式下使用）
     """
+    # 如果没有提供file_path，从数据库获取
+    if not file_path:
+        if not months:
+            raise HTTPException(status_code=400, detail="数据库模式下必须提供months参数")
+
+        try:
+            from app.db.crud import get_project_orders_from_db
+
+            months_list = [m.strip() for m in months.split(',') if m.strip()]
+            order_records = get_project_orders_from_db(db, project_code, months_list)
+
+            return AnalysisResult(
+                success=True,
+                message="获取项目订单记录成功",
+                data={
+                    "project_code": project_code,
+                    "orders": order_records,
+                    "total_count": len(order_records)
+                }
+            )
+        except Exception as e:
+            logger.exception(f"从数据库获取项目订单记录失败: {e}")
+            raise HTTPException(status_code=500, detail=f"获取项目订单记录失败: {str(e)}")
+
+    # 从Excel文件获取
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="文件不存在")
 
@@ -621,23 +731,58 @@ async def get_department_hierarchy(file_path: str):
 
 
 @router.get("/departments/list")
-async def get_department_list(file_path: str, level: int, parent: Optional[str] = None):
+async def get_department_list(
+    file_path: Optional[str] = Query(None, description="文件路径（可选，不提供则从数据库读取）"),
+    level: int = Query(..., description="部门层级 (1=一级, 2=二级, 3=三级)"),
+    parent: Optional[str] = Query(None, description="父部门名称（level>1时必需）"),
+    months: Optional[str] = Query(None, description="月份列表，逗号分隔 (例如: 2025-01,2025-02)"),
+    db: Session = Depends(get_db)
+):
     """
     获取部门列表
 
+    支持从Excel文件或数据库获取数据
+
     Args:
-        file_path: Excel 文件路径
+        file_path: Excel 文件路径（可选）
         level: 部门层级 (1=一级, 2=二级, 3=三级)
         parent: 父部门名称（level>1时必需）
+        months: 月份列表（数据库模式下使用）
     """
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="文件不存在")
-
     if level not in [1, 2, 3]:
         raise HTTPException(status_code=400, detail="部门层级必须是1、2或3")
 
     if level > 1 and not parent:
         raise HTTPException(status_code=400, detail=f"{level}级部门需要指定父部门")
+
+    # 如果没有提供file_path，从数据库获取
+    if not file_path:
+        if not months:
+            raise HTTPException(status_code=400, detail="数据库模式下必须提供months参数")
+
+        try:
+            from app.db.crud import get_department_list_from_db
+
+            months_list = [m.strip() for m in months.split(',') if m.strip()]
+            departments = get_department_list_from_db(db, level, parent, months_list)
+
+            return AnalysisResult(
+                success=True,
+                message="获取部门列表成功",
+                data={
+                    "level": level,
+                    "parent": parent,
+                    "departments": departments,
+                    "total_count": len(departments)
+                }
+            )
+        except Exception as e:
+            logger.exception(f"从数据库获取部门列表失败: {e}")
+            raise HTTPException(status_code=500, detail=f"获取部门列表失败: {str(e)}")
+
+    # 从Excel文件获取
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="文件不存在")
 
     try:
         processor = ExcelProcessor(file_path)
@@ -662,20 +807,55 @@ async def get_department_list(file_path: str, level: int, parent: Optional[str] 
 
 
 @router.get("/departments/details")
-async def get_department_details(file_path: str, department_name: str, level: int = 3):
+async def get_department_details(
+    file_path: Optional[str] = Query(None, description="文件路径（可选，不提供则从数据库读取）"),
+    department_name: str = Query(..., description="部门名称"),
+    level: int = Query(3, description="部门层级 (1=一级, 2=二级, 3=三级，默认3)"),
+    months: Optional[str] = Query(None, description="月份列表，逗号分隔 (例如: 2025-01,2025-02)"),
+    db: Session = Depends(get_db)
+):
     """
     获取指定部门的详细指标
 
+    支持从Excel文件或数据库获取数据
+
     Args:
-        file_path: Excel 文件路径
+        file_path: Excel 文件路径（可选）
         department_name: 部门名称
         level: 部门层级 (1=一级, 2=二级, 3=三级，默认3)
+        months: 月份列表（数据库模式下使用）
     """
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="文件不存在")
-
     if level not in [1, 2, 3]:
         raise HTTPException(status_code=400, detail="部门层级必须是1、2或3")
+
+    # 如果没有提供file_path，从数据库获取
+    if not file_path:
+        if not months:
+            raise HTTPException(status_code=400, detail="数据库模式下必须提供months参数")
+
+        try:
+            from app.db.crud import get_department_details_from_db
+
+            months_list = [m.strip() for m in months.split(',') if m.strip()]
+            details = get_department_details_from_db(db, department_name, level, months_list)
+
+            if not details:
+                raise HTTPException(status_code=404, detail=f"未找到部门: {department_name}")
+
+            return AnalysisResult(
+                success=True,
+                message="获取部门详情成功",
+                data=details
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"从数据库获取部门详情失败: {e}")
+            raise HTTPException(status_code=500, detail=f"获取部门详情失败: {str(e)}")
+
+    # 从Excel文件获取
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="文件不存在")
 
     try:
         processor = ExcelProcessor(file_path)
@@ -700,22 +880,57 @@ async def get_department_details(file_path: str, department_name: str, level: in
 
 
 @router.get("/departments/level1/statistics")
-async def get_level1_department_statistics(file_path: str, level1_name: str):
+async def get_level1_department_statistics(
+    file_path: Optional[str] = Query(None, description="文件路径（可选，不提供则从数据库读取）"),
+    level1_name: str = Query(..., description="一级部门名称"),
+    months: Optional[str] = Query(None, description="月份列表，逗号分隔 (例如: 2025-01)"),
+    db: Session = Depends(get_db)
+):
     """
     获取一级部门的汇总统计数据（用于二级部门表格下方的统计展示）
 
+    支持从Excel文件或数据库获取数据
+
     Args:
-        file_path: Excel 文件路径
+        file_path: Excel 文件路径（可选）
         level1_name: 一级部门名称
+        months: 月份列表（数据库模式下使用）
 
     Returns:
         包含以下统计数据的字典:
+        - department_name: 部门名称
         - total_travel_cost: 累计差旅成本
         - attendance_days_distribution: 考勤天数分布
         - travel_ranking: 出差排行榜（按人）
         - avg_hours_ranking: 平均工时排行榜（按人）
         - level2_department_stats: 二级部门统计列表（包含所有指标）
     """
+    # 如果没有提供file_path，从数据库获取
+    if not file_path:
+        if not months:
+            raise HTTPException(status_code=400, detail="数据库模式下必须提供months参数")
+
+        try:
+            from app.db.crud import get_level1_department_statistics_from_db
+
+            months_list = [m.strip() for m in months.split(',') if m.strip()]
+            statistics = get_level1_department_statistics_from_db(db, level1_name, months_list)
+
+            if not statistics:
+                raise HTTPException(status_code=404, detail=f"未找到一级部门: {level1_name}")
+
+            return AnalysisResult(
+                success=True,
+                message="获取一级部门统计数据成功",
+                data=statistics
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"从数据库获取一级部门统计数据失败: {e}")
+            raise HTTPException(status_code=500, detail=f"获取一级部门统计数据失败: {str(e)}")
+
+    # 从Excel文件获取
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="文件不存在")
 

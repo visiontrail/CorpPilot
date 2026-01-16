@@ -83,7 +83,7 @@ export const getAvailableMonths = async (): Promise<ApiResponse<string[]>> => {
 /**
  * 分析 Excel 文件
  * POST /api/analyze
- * @param filePath 文件路径
+ * @param filePath 文件路径（可选，不提供则从数据库读取）
  * @param options 可选参数
  * @param options.months 月份列表 (例如: ["2025-01", "2025-02"])
  * @param options.quarter 季度 (1, 2, 3, 4)
@@ -189,16 +189,26 @@ export const clearData = async (filePath: string): Promise<ApiResponse> => {
 
 /**
  * 获取所有项目的详细信息
- * @param filePath 文件路径
+ * @param filePath 文件路径（可选，不提供则从数据库读取）
+ * @param months 月份列表（数据库模式下使用）
  * @returns 项目详情列表
  */
-export const getAllProjects = async (filePath: string): Promise<ApiResponse<{
+export const getAllProjects = async (
+  filePath: string,
+  months?: string[]
+): Promise<ApiResponse<{
   projects: any[]
   total_count: number
 }>> => {
-  return apiClient.get('/projects', {
-    params: { file_path: filePath }
-  }) as Promise<ApiResponse<{
+  const params: Record<string, any> = {}
+  if (filePath) {
+    params.file_path = filePath
+  }
+  if (months && months.length > 0) {
+    params.months = months.join(',')
+  }
+
+  return apiClient.get('/projects', { params }) as Promise<ApiResponse<{
     projects: any[]
     total_count: number
   }>>
@@ -206,23 +216,31 @@ export const getAllProjects = async (filePath: string): Promise<ApiResponse<{
 
 /**
  * 获取指定项目的所有订单记录
- * @param filePath 文件路径
+ * @param filePath 文件路径（可选，不提供则从数据库读取）
  * @param projectCode 项目代码
+ * @param months 月份列表（数据库模式下使用）
  * @returns 项目订单记录列表
  */
 export const getProjectOrders = async (
   filePath: string,
-  projectCode: string
+  projectCode: string,
+  months?: string[]
 ): Promise<ApiResponse<{
   project_code: string
   orders: any[]
   total_count: number
 }>> => {
-  return apiClient.get(`/projects/${encodeURIComponent(projectCode)}/orders`, {
-    params: { file_path: filePath }
-  }) as Promise<ApiResponse<{
+  const params: Record<string, any> = {}
+  if (filePath) {
+    params.file_path = filePath
+  }
+  if (months && months.length > 0) {
+    params.months = months.join(',')
+  }
+
+  return apiClient.get(`/projects/${encodeURIComponent(projectCode)}/orders`, { params }) as Promise<ApiResponse<{
     project_code: string
-  orders: any[]
+    orders: any[]
     total_count: number
   }>>
 }
@@ -250,24 +268,35 @@ export const getDepartmentHierarchy = async (
 
 /**
  * 获取部门列表
- * @param filePath 文件路径
+ * @param filePath 文件路径（可选，不提供则从数据库读取）
  * @param level 部门层级 (1=一级, 2=二级, 3=三级)
  * @param parent 父部门名称（level>1时必需）
+ * @param months 月份列表（数据库模式下使用）
  * @returns 部门列表
  */
 export const getDepartmentList = async (
   filePath: string,
   level: number,
-  parent?: string
+  parent?: string,
+  months?: string[]
 ): Promise<ApiResponse<{
   level: number
   parent?: string
   departments: any[]
   total_count: number
 }>> => {
-  return apiClient.get('/departments/list', {
-    params: { file_path: filePath, level, parent }
-  }) as Promise<ApiResponse<{
+  const params: Record<string, any> = { level }
+  if (filePath) {
+    params.file_path = filePath
+  }
+  if (parent) {
+    params.parent = parent
+  }
+  if (months && months.length > 0) {
+    params.months = months.join(',')
+  }
+
+  return apiClient.get('/departments/list', { params }) as Promise<ApiResponse<{
     level: number
     parent?: string
     departments: any[]
@@ -277,30 +306,40 @@ export const getDepartmentList = async (
 
 /**
  * 获取指定部门的详细指标
- * @param filePath 文件路径
+ * @param filePath 文件路径（可选，不提供则从数据库读取）
  * @param departmentName 部门名称
  * @param level 部门层级 (1=一级, 2=二级, 3=三级，默认3)
+ * @param months 月份列表（数据库模式下使用）
  * @returns 部门详细指标
  */
 export const getDepartmentDetails = async (
   filePath: string,
   departmentName: string,
-  level: number = 3
+  level: number = 3,
+  months?: string[]
 ): Promise<ApiResponse<any>> => {
-  return apiClient.get('/departments/details', {
-    params: { file_path: filePath, department_name: departmentName, level }
-  }) as Promise<ApiResponse<any>>
+  const params: Record<string, any> = { department_name: departmentName, level }
+  if (filePath) {
+    params.file_path = filePath
+  }
+  if (months && months.length > 0) {
+    params.months = months.join(',')
+  }
+
+  return apiClient.get('/departments/details', { params }) as Promise<ApiResponse<any>>
 }
 
 /**
  * 获取一级部门的汇总统计数据（用于二级部门表格下方的统计展示）
- * @param filePath 文件路径
+ * @param filePath 文件路径（可选，不提供则从数据库读取）
  * @param level1Name 一级部门名称
+ * @param months 月份列表（数据库模式下使用）
  * @returns 一级部门统计数据
  */
 export const getLevel1DepartmentStatistics = async (
   filePath: string,
-  level1Name: string
+  level1Name: string,
+  months?: string[]
 ): Promise<ApiResponse<{
   department_name: string
   total_travel_cost: number
@@ -321,28 +360,34 @@ export const getLevel1DepartmentStatistics = async (
     total_cost: number
   }>
 }>> => {
-  return apiClient.get('/departments/level1/statistics', {
-    params: { file_path: filePath, level1_name: level1Name }
-  }) as Promise<ApiResponse<{
+  const params: Record<string, any> = { level1_name: level1Name }
+  if (filePath) {
+    params.file_path = filePath
+  }
+  if (months && months.length > 0) {
+    params.months = months.join(',')
+  }
+
+  return apiClient.get('/departments/level1/statistics', { params }) as Promise<ApiResponse<{
     department_name: string
     total_travel_cost: number
     attendance_days_distribution: Record<string, number>
     travel_ranking: Array<{ name: string; value: number; detail?: string }>
-  avg_hours_ranking: Array<{ name: string; value: number; detail?: string }>
-  level2_department_stats: Array<{
-    name: string
-    person_count: number
-    avg_work_hours: number
-    workday_attendance_days: number
-    weekend_work_days: number
-    weekend_attendance_count: number
-    travel_days: number
-    leave_days: number
-    anomaly_days: number
-    late_after_1930_count: number
-    total_cost: number
-  }>
-}>>
+    avg_hours_ranking: Array<{ name: string; value: number; detail?: string }>
+    level2_department_stats: Array<{
+      name: string
+      person_count: number
+      avg_work_hours: number
+      workday_attendance_days: number
+      weekend_work_days: number
+      weekend_attendance_count: number
+      travel_days: number
+      leave_days: number
+      anomaly_days: number
+      late_after_1930_count: number
+      total_cost: number
+    }>
+  }>>
 }
 
 // 导出 axios 实例供特殊情况使用

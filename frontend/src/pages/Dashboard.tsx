@@ -641,6 +641,42 @@ const Dashboard = () => {
           ¥{value.toLocaleString()}
         </Text>
       )
+    },
+    {
+      title: '机票 (元)',
+      dataIndex: 'flight_cost',
+      key: 'flight_cost',
+      width: 120,
+      sorter: (a: any, b: any) => (a.flight_cost || 0) - (b.flight_cost || 0),
+      render: (value: number) => (
+        <Text style={{ color: '#1890ff' }}>
+          ¥{(value || 0).toLocaleString()}
+        </Text>
+      )
+    },
+    {
+      title: '酒店 (元)',
+      dataIndex: 'hotel_cost',
+      key: 'hotel_cost',
+      width: 120,
+      sorter: (a: any, b: any) => (a.hotel_cost || 0) - (b.hotel_cost || 0),
+      render: (value: number) => (
+        <Text style={{ color: '#722ed1' }}>
+          ¥{(value || 0).toLocaleString()}
+        </Text>
+      )
+    },
+    {
+      title: '火车票 (元)',
+      dataIndex: 'train_cost',
+      key: 'train_cost',
+      width: 120,
+      sorter: (a: any, b: any) => (a.train_cost || 0) - (b.train_cost || 0),
+      render: (value: number) => (
+        <Text style={{ color: '#fa8c16' }}>
+          ¥{(value || 0).toLocaleString()}
+        </Text>
+      )
     }
   ]
 
@@ -885,7 +921,7 @@ const Dashboard = () => {
 
       {/* 项目统计表格 */}
       <Card
-        title={<><ProjectOutlined /> 项目成本详情（Top 20 + 其他）</>}
+        title={<><ProjectOutlined /> 项目成本详情（Top 20）</>}
         style={{ marginBottom: 24 }}
       >
         <Table

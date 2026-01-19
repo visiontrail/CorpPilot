@@ -296,7 +296,10 @@ async def analyze_excel(
             {
                 'code': item['project_code'],
                 'name': item['project_name'],
-                'cost': item['total_cost']
+                'cost': item['total_cost'],
+                'flight_cost': item.get('flight_cost', 0),
+                'hotel_cost': item.get('hotel_cost', 0),
+                'train_cost': item.get('train_cost', 0)
             }
             for item in project_costs
         ]

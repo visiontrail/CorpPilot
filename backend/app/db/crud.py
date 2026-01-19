@@ -1659,7 +1659,10 @@ def get_dashboard_data(
             {
                 'code': item['code'],
                 'name': item['name'],
-                'cost': item['cost']
+                'cost': item['cost'],
+                'flight_cost': item.get('flight_cost', 0),
+                'hotel_cost': item.get('hotel_cost', 0),
+                'train_cost': item.get('train_cost', 0)
             }
             for item in project_stats
         ],

@@ -391,6 +391,9 @@ class ExcelProcessor:
                         'project_code': row['project_code'],
                         'project_name': row['project_name'],
                         'total_cost': float(row['amount']),
+                        'flight_cost': float(flight_cost),
+                        'hotel_cost': float(hotel_cost),
+                        'train_cost': float(train_cost),
                         'record_count': int(row['person']),
                         'details': project_details[:10]
                     })
@@ -399,6 +402,9 @@ class ExcelProcessor:
                 others_df = grouped.iloc[top_n:]
                 others_total_cost = float(others_df['amount'].sum())
                 others_record_count = int(others_df['person'].sum())
+                others_flight_cost = float(df_projects[df_projects['project_code'].isin(others_df['project_code']) & (df_projects['type'] == '机票')]['amount'].sum())
+                others_hotel_cost = float(df_projects[df_projects['project_code'].isin(others_df['project_code']) & (df_projects['type'] == '酒店')]['amount'].sum())
+                others_train_cost = float(df_projects[df_projects['project_code'].isin(others_df['project_code']) & (df_projects['type'] == '火车票')]['amount'].sum())
                 
                 self.logger.info(f"\n   #{top_n+1}. 其他")
                 self.logger.info(f"      汇总项目数: {total_count - top_n}")
@@ -408,6 +414,9 @@ class ExcelProcessor:
                     'project_code': '其他',
                     'project_name': f'其他项目（{total_count - top_n}个）',
                     'total_cost': others_total_cost,
+                    'flight_cost': others_flight_cost,
+                    'hotel_cost': others_hotel_cost,
+                    'train_cost': others_train_cost,
                     'record_count': others_record_count,
                     'details': []
                 })
@@ -436,6 +445,9 @@ class ExcelProcessor:
                         'project_code': row['project_code'],
                         'project_name': row['project_name'],
                         'total_cost': float(row['amount']),
+                        'flight_cost': float(flight_cost),
+                        'hotel_cost': float(hotel_cost),
+                        'train_cost': float(train_cost),
                         'record_count': int(row['person']),
                         'details': project_details[:10]
                     })

@@ -39,6 +39,9 @@ export interface ProjectTop10 {
   code: string              // 项目代码
   name: string              // 项目名称
   cost: number              // 项目成本
+  flight_cost?: number      // 机票成本
+  hotel_cost?: number       // 酒店成本
+  train_cost?: number       // 火车票成本
 }
 
 // ============ 项目详细信息 ============

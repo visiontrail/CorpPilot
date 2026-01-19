@@ -28,7 +28,10 @@ apiClient.interceptors.response.use(
   (error) => {
     const message = error.response?.data?.detail || error.message || '请求失败'
     console.error('API Error:', message)
-    return Promise.reject(new Error(message))
+    const err = new Error(message)
+    ;(err as any).response = error.response
+    ;(err as any).status = error.response?.status
+    return Promise.reject(err)
   }
 )
 
@@ -37,24 +40,50 @@ apiClient.interceptors.response.use(
 /**
  * 上传 Excel 文件
  * @param file 文件对象
- * @returns 上传结果（包含文件路径）
+ * @returns 上传结果（包含文件路径和任务ID）
  */
 export const uploadFile = async (file: File): Promise<ApiResponse<UploadResponse>> => {
   const formData = new FormData()
   formData.append('file', file)
 
-  const response = await axios.post<ApiResponse<UploadResponse>>(
-    `${API_BASE_URL}/upload`,
+  const response = await apiClient.post<ApiResponse<UploadResponse>>(
+    '/upload',
     formData,
     {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 300000, // 5 分钟
     }
   )
 
-  return response.data
+  return response as ApiResponse<UploadResponse>
+}
+
+/**
+ * 获取上传进度
+ * @param taskId 任务ID
+ * @returns 上传进度信息
+ */
+export const getUploadProgress = async (taskId: string): Promise<ApiResponse<{
+  task_id: string
+  file_name: string
+  status: string
+  progress: number
+  current_step: string
+  steps: Array<{ step: string; completed_at: string }>
+  error: string | null
+  result?: any
+}>> => {
+  return apiClient.get(`/progress/${encodeURIComponent(taskId)}`) as Promise<ApiResponse<{
+    task_id: string
+    file_name: string
+    status: string
+    progress: number
+    current_step: string
+    steps: Array<{ step: string; completed_at: string }>
+    error: string | null
+    result?: any
+  }>>
 }
 
 /**

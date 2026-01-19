@@ -1,18 +1,20 @@
 """
 API 路由定义
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends, Query, Path
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends, Query, Path, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 from typing import Dict, Any, Optional
 import json
 import os
 import shutil
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 from app.services.excel_processor import ExcelProcessor
 from app.services.database_parser import DatabaseParser
+from app.services.upload_progress import progress_manager
 from app.models.schemas import AnalysisResult, DashboardData
 from app.config import settings
 from app.utils.logger import get_logger
@@ -144,57 +146,123 @@ async def get_available_months(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"获取月份列表失败: {str(e)}")
 
 
-@router.post("/upload", response_model=AnalysisResult)
-async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+@router.get("/progress/{task_id}")
+async def get_upload_progress(task_id: str):
     """
-    上传 Excel 文件并解析到数据库
+    获取上传进度
     """
-    if not file.filename or not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="仅支持 .xlsx 或 .xls 文件")
+    progress = progress_manager.get_progress(task_id)
+    
+    if not progress:
+        raise HTTPException(status_code=404, detail="任务不存在或已过期")
+    
+    return {"success": True, "data": progress}
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_filename = f"{timestamp}_{file.filename}"
-    file_path = os.path.join(settings.upload_dir, safe_filename)
 
+def _process_upload_task(file_path: str, file_name: str, task_id: str):
+    """后台任务：处理文件上传和解析"""
+    from app.db.database import SessionLocal
+    db = SessionLocal()
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
+        progress_manager.update_progress(task_id, 30, "正在读取Excel文件...")
+        progress_manager.add_step(task_id, f"✅ 文件已上传: {file_name} ({os.path.getsize(file_path) / 1024 / 1024:.2f} MB)")
+        
         processor = ExcelProcessor(file_path)
         sheet_names = processor.get_sheet_names()
+        progress_manager.add_step(task_id, f"📋 检测到 {len(sheet_names)} 个工作表: {', '.join(sheet_names)}")
+        
         file_size = os.path.getsize(file_path)
+        progress_manager.update_progress(task_id, 40, "正在解析数据并写入数据库...")
 
-        parser = DatabaseParser(file_path)
+        def progress_callback(progress: int, message: str):
+            progress_manager.update_progress(task_id, progress, message)
+            progress_manager.add_step(task_id, message)
+
+        parser = DatabaseParser(file_path, progress_callback)
         parse_stats = parser.parse_and_insert(db)
+        
+        progress_manager.add_step(task_id, f"✅ 考勤记录: {parse_stats['attendance_count']} 条")
+        progress_manager.add_step(task_id, f"✅ 机票记录: {parse_stats['flight_count']} 条")
+        progress_manager.add_step(task_id, f"✅ 酒店记录: {parse_stats['hotel_count']} 条")
+        progress_manager.add_step(task_id, f"✅ 火车票记录: {parse_stats['train_count']} 条")
+        progress_manager.add_step(task_id, f"✅ 异常记录: {parse_stats['anomalies_count']} 条")
+        
+        progress_manager.update_progress(task_id, 90, "正在保存上传记录...")
 
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         _upsert_upload_record({
             "file_path": file_path,
-            "file_name": file.filename,
+            "file_name": file_name,
             "file_size": file_size,
             "sheets": sheet_names,
             "upload_time": timestamp,
             "parsed": True,
             "last_analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         })
-
-        return AnalysisResult(
-            success=True,
-            message="文件上传并解析成功",
-            data={
-                "file_path": file_path,
-                "file_name": file.filename,
-                "upload_id": parse_stats.get("upload_id"),
-                "parse_status": "parsed",
-                "stats": parse_stats
-            },
-        )
-
+        
+        progress_manager.update_progress(task_id, 100, "上传并解析完成")
+        progress_manager.complete_task(task_id, {
+            "file_path": file_path,
+            "file_name": file_name,
+            "upload_id": parse_stats.get("upload_id"),
+            "stats": parse_stats
+        })
     except Exception as e:
         db.rollback()
         if os.path.exists(file_path):
             os.remove(file_path)
         logger.error(f"文件上传失败: {e}")
-        raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
+        
+        error_msg = str(e)
+        progress_manager.fail_task(task_id, error_msg)
+    finally:
+        db.close()
+
+
+@router.post("/upload", response_model=AnalysisResult)
+async def upload_file(file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
+    """
+    上传 Excel 文件并解析到数据库
+    """
+    if not file.filename or not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="仅支持 .xlsx 或 .xls 文件")
+
+    task_id = str(uuid.uuid4())
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_filename = f"{timestamp}_{file.filename}"
+    file_path = os.path.join(settings.upload_dir, safe_filename)
+
+    try:
+        progress_manager.create_task(task_id, file.filename)
+        progress_manager.update_progress(task_id, 10, "正在上传文件...")
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        progress_manager.update_progress(task_id, 20, "文件上传完成，开始解析...")
+        
+        # 添加后台任务处理文件
+        background_tasks.add_task(_process_upload_task, file_path, file.filename, task_id)
+
+        return AnalysisResult(
+            success=True,
+            message="文件上传成功，正在后台解析",
+            data={
+                "file_path": file_path,
+                "file_name": file.filename,
+                "task_id": task_id,
+            },
+        )
+
+    except Exception as e:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        logger.error(f"文件上传失败: {e}")
+        
+        error_msg = str(e)
+        progress_manager.fail_task(task_id, error_msg)
+        
+        raise HTTPException(status_code=500, detail=f"文件上传失败: {error_msg}")
 
 
 @router.post("/analyze", response_model=AnalysisResult)

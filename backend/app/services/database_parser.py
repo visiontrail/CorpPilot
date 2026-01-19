@@ -1,5 +1,5 @@
 """Database parsing service to insert Excel data into database."""
-from typing import List
+from typing import List, Optional, Callable
 import pandas as pd
 from sqlalchemy.orm import Session
 from app.db.crud import (
@@ -18,10 +18,17 @@ logger = get_logger(__name__)
 class DatabaseParser:
     """Parse Excel file and insert data into database."""
 
-    def __init__(self, file_path: str):
+    def __init__(self, file_path: str, progress_callback: Optional[Callable[[int, str], None]] = None):
         self.file_path = file_path
         self.processor = ExcelProcessor(file_path)
         self.logger = logger
+        self.progress_callback = progress_callback
+
+    def _update_progress(self, progress: int, message: str) -> None:
+        """Update progress if callback is provided"""
+        if self.progress_callback:
+            self.progress_callback(progress, message)
+        self.logger.info(f"Progress {progress}%: {message}")
 
     def parse_and_insert(self, db: Session) -> dict:
         """
@@ -31,13 +38,16 @@ class DatabaseParser:
             dict with statistics about inserted records
         """
         try:
-            # Load all sheets
+            self._update_progress(45, "正在读取Excel文件...")
+            
             self.logger.info(f"Starting database parsing for {self.file_path}")
             sheets_data = self.processor.load_all_sheets()
 
             # Get sheet names
             sheet_names = list(sheets_data.keys())
 
+            self._update_progress(50, "正在创建上传记录...")
+            
             # Create or get upload record
             upload_record = create_or_get_upload_record(
                 db,
@@ -62,6 +72,7 @@ class DatabaseParser:
 
             # Insert attendance data
             if "状态明细" in sheets_data:
+                self._update_progress(55, "正在解析考勤数据...")
                 attendance_df = self.processor.clean_attendance_data()
                 if not attendance_df.empty:
                     stats["attendance_count"] = batch_insert_attendance(
@@ -70,12 +81,13 @@ class DatabaseParser:
                     self.logger.info(
                         f"Inserted {stats['attendance_count']} attendance records"
                     )
+                    self._update_progress(60, f"✅ 已写入考勤数据: {stats['attendance_count']} 条")
 
             # Insert travel expense data
             expense_types = [
-                ("机票", "flight_count"),
-                ("酒店", "hotel_count"),
-                ("火车票", "train_count"),
+                ("机票", "flight_count", 65),
+                ("酒店", "hotel_count", 75),
+                ("火车票", "train_count", 85),
             ]
 
             # 获取考勤数据用于填充部门信息
@@ -91,8 +103,9 @@ class DatabaseParser:
             else:
                 person_dept_map = {}
 
-            for sheet_name, count_key in expense_types:
+            for sheet_name, count_key, progress_value in expense_types:
                 if sheet_name in sheets_data:
+                    self._update_progress(progress_value - 5, f"正在解析{sheet_name}数据...")
                     expense_df = self.processor.clean_travel_data(sheet_name)
                     if not expense_df.empty:
                         # 如果差旅表中一级部门为空，尝试从考勤表中填充
@@ -107,6 +120,7 @@ class DatabaseParser:
                         )
                         stats[count_key] = count
                         self.logger.info(f"Inserted {count} {sheet_name} records")
+                        self._update_progress(progress_value, f"✅ 已写入{sheet_name}数据: {count} 条")
 
             stats["total_expenses"] = (
                 stats["flight_count"] + stats["hotel_count"] + stats["train_count"]
@@ -116,12 +130,14 @@ class DatabaseParser:
             if "状态明细" in sheets_data and any(
                 t in sheets_data for t in ["机票", "酒店", "火车票"]
             ):
+                self._update_progress(88, "正在分析异常数据...")
                 anomalies = self.processor.cross_check_attendance_travel()
                 if anomalies:
                     stats["anomalies_count"] = batch_insert_anomalies(
                         db, upload_record.id, anomalies
                     )
                     self.logger.info(f"Inserted {stats['anomalies_count']} anomaly records")
+                    self._update_progress(90, f"✅ 已写入异常数据: {stats['anomalies_count']} 条")
 
             # Update upload record status
             upload_record.parse_status = "parsed"

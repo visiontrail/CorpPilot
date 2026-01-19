@@ -125,6 +125,7 @@ export interface UploadRecord {
   parsed?: boolean
   last_analyzed_at?: string | null
   exists?: boolean
+  task_id?: string
 }
 
 export type UploadResponse = UploadRecord

@@ -9,13 +9,15 @@ import {
   Alert,
   Spin,
   Progress,
+  List,
 } from 'antd'
 import {
   InboxOutlined,
   FileExcelOutlined,
+  CheckCircleOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { uploadFile } from '@/services/api'
+import { uploadFile, getUploadProgress } from '@/services/api'
 import { useMonthContext } from '@/contexts/MonthContext'
 
 const { Dragger } = AntUpload
@@ -26,6 +28,52 @@ const Upload = () => {
   const { refreshMonths } = useMonthContext()
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [currentStep, setCurrentStep] = useState('')
+  const [steps, setSteps] = useState<Array<{ step: string; completed_at: string }>>([])
+  const [status, setStatus] = useState<string>('')
+
+  const pollProgress = async (id: string) => {
+    try {
+      const result = await getUploadProgress(id)
+      
+      if (result.success && result.data) {
+        setUploadProgress(result.data.progress)
+        setCurrentStep(result.data.current_step)
+        setSteps(result.data.steps || [])
+        setStatus(result.data.status)
+
+        if (result.data.status === 'completed') {
+          message.success('文件上传并解析成功！')
+          await refreshMonths()
+          setTimeout(() => {
+            navigate('/')
+          }, 1500)
+          return
+        }
+
+        if (result.data.status === 'failed') {
+          message.error(result.data.error || '文件上传失败')
+          setUploading(false)
+          setUploadProgress(0)
+          return
+        }
+
+        if (result.data.status === 'uploading' || result.data.status === 'processing') {
+          setTimeout(() => pollProgress(id), 1000)
+        }
+      }
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        message.warning('任务已完成或已过期')
+        setUploading(false)
+        setUploadProgress(0)
+      } else {
+        message.error(error.message || '获取上传进度失败')
+        setUploading(false)
+        setUploadProgress(0)
+      }
+    }
+  }
 
   const handleUpload = async (file: File) => {
     if (file.size > 50 * 1024 * 1024) {
@@ -44,38 +92,23 @@ const Upload = () => {
 
     setUploading(true)
     setUploadProgress(0)
+    setCurrentStep('正在上传文件...')
+    setSteps([])
+    setStatus('uploading')
 
     try {
-      const progressInterval = setInterval(() => {
-        setUploadProgress((prev) => {
-          if (prev >= 90) {
-            clearInterval(progressInterval)
-            return 90
-          }
-          return prev + 10
-        })
-      }, 100)
-
       const result = await uploadFile(file)
 
-      clearInterval(progressInterval)
-      setUploadProgress(100)
-
-      if (result.success) {
-        message.success('文件上传并解析成功！')
-        await refreshMonths()
-
-        setTimeout(() => {
-          navigate('/')
-        }, 1500)
+      if (result.success && result.data?.task_id) {
+        pollProgress(result.data.task_id)
       } else {
         message.error(result.message || '文件上传失败')
+        setUploading(false)
         setUploadProgress(0)
       }
     } catch (error: any) {
       message.error(error.message || '文件上传失败')
       setUploadProgress(0)
-    } finally {
       setUploading(false)
     }
 
@@ -121,11 +154,33 @@ const Upload = () => {
             <div style={{ padding: '40px 0' }}>
               <Spin size="large" />
               <div style={{ marginTop: 16, textAlign: 'center' }}>
-                <Text>正在上传并解析文件... {uploadProgress}%</Text>
+                <Text strong>{currentStep}</Text>
               </div>
               <div style={{ marginTop: 8 }}>
-                <Progress percent={uploadProgress} />
+                <Progress 
+                  percent={uploadProgress} 
+                  status={status === 'failed' ? 'exception' : status === 'completed' ? 'success' : 'active'}
+                  strokeColor={status === 'failed' ? '#ff4d4f' : undefined}
+                />
               </div>
+              
+              {steps.length > 0 && (
+                <div style={{ marginTop: 24, background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
+                  <Text strong>处理进度：</Text>
+                  <List
+                    size="small"
+                    dataSource={steps}
+                    renderItem={(item) => (
+                      <List.Item>
+                        <Space>
+                          <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                          <Text>{item.step}</Text>
+                        </Space>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              )}
             </div>
           ) : (
             <Dragger {...uploadProps}>

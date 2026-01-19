@@ -12,15 +12,23 @@ import type {
 
 // API 基础地址
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
+ 
+type DataAxiosInstance = Omit<AxiosInstance, 'request' | 'get' | 'delete' | 'post' | 'put'> & {
+  request<T = any>(config: any): Promise<T>
+  get<T = any>(url: string, config?: any): Promise<T>
+  delete<T = any>(url: string, config?: any): Promise<T>
+  post<T = any>(url: string, data?: any, config?: any): Promise<T>
+  put<T = any>(url: string, data?: any, config?: any): Promise<T>
+}
 
 // 创建 axios 实例
-const apiClient: AxiosInstance = axios.create({
+const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 300000, // 5分钟超时
   headers: {
     'Content-Type': 'application/json',
   },
-})
+}) as unknown as DataAxiosInstance
 
 // 响应拦截器
 apiClient.interceptors.response.use(
@@ -46,7 +54,7 @@ export const uploadFile = async (file: File): Promise<ApiResponse<UploadResponse
   const formData = new FormData()
   formData.append('file', file)
 
-  const response = await apiClient.post<ApiResponse<UploadResponse>>(
+  return apiClient.post<ApiResponse<UploadResponse>>(
     '/upload',
     formData,
     {
@@ -55,8 +63,6 @@ export const uploadFile = async (file: File): Promise<ApiResponse<UploadResponse
       },
     }
   )
-
-  return response as ApiResponse<UploadResponse>
 }
 
 /**
@@ -74,7 +80,7 @@ export const getUploadProgress = async (taskId: string): Promise<ApiResponse<{
   error: string | null
   result?: any
 }>> => {
-  return apiClient.get(`/progress/${encodeURIComponent(taskId)}`) as Promise<ApiResponse<{
+  return apiClient.get<ApiResponse<{
     task_id: string
     file_name: string
     status: string
@@ -83,7 +89,7 @@ export const getUploadProgress = async (taskId: string): Promise<ApiResponse<{
     steps: Array<{ step: string; completed_at: string }>
     error: string | null
     result?: any
-  }>>
+  }>>(`/progress/${encodeURIComponent(taskId)}`)
 }
 
 /**
@@ -92,21 +98,21 @@ export const getUploadProgress = async (taskId: string): Promise<ApiResponse<{
  * @returns 缓存的分析结果
  */
 export const getCache = async (fileName: string): Promise<ApiResponse<AnalysisResult>> => {
-  return apiClient.get(`/cache/${encodeURIComponent(fileName)}`) as Promise<ApiResponse<AnalysisResult>>
+  return apiClient.get<ApiResponse<AnalysisResult>>(`/cache/${encodeURIComponent(fileName)}`)
 }
 
 /**
  * 获取已上传文件列表
  */
 export const listUploads = async (): Promise<ApiResponse<UploadRecord[]>> => {
-  return apiClient.get('/uploads') as Promise<ApiResponse<UploadRecord[]>>
+  return apiClient.get<ApiResponse<UploadRecord[]>>('/uploads')
 }
 
 /**
  * 获取所有可用的月份列表（跨所有文件）
  */
 export const getAvailableMonths = async (): Promise<ApiResponse<string[]>> => {
-  return apiClient.get('/months') as Promise<ApiResponse<string[]>>
+  return apiClient.get<ApiResponse<string[]>>('/months')
 }
 
 /**
@@ -121,13 +127,13 @@ export const deleteMonth = async (month: string): Promise<ApiResponse<{
   deleted_anomalies: number
   deleted_files: string[]
 }>> => {
-  return apiClient.delete(`/months/${encodeURIComponent(month)}`) as Promise<ApiResponse<{
+  return apiClient.delete<ApiResponse<{
     deleted_uploads: string[]
     deleted_attendance: number
     deleted_travel: number
     deleted_anomalies: number
     deleted_files: string[]
-  }>>
+  }>>(`/months/${encodeURIComponent(month)}`)
 }
 
 /**
@@ -163,7 +169,7 @@ export const analyzeExcel = async (
     params.year = options.year
   }
 
-  return apiClient.post('/analyze', null, { params }) as Promise<ApiResponse<AnalysisResult>>
+  return apiClient.post<ApiResponse<AnalysisResult>>('/analyze', null, { params })
 }
 
 /**
@@ -258,10 +264,10 @@ export const getAllProjects = async (
     params.months = months.join(',')
   }
 
-  return apiClient.get('/projects', { params }) as Promise<ApiResponse<{
+  return apiClient.get<ApiResponse<{
     projects: any[]
     total_count: number
-  }>>
+  }>>('/projects', { params })
 }
 
 /**
@@ -288,11 +294,11 @@ export const getProjectOrders = async (
     params.months = months.join(',')
   }
 
-  return apiClient.get(`/projects/${encodeURIComponent(projectCode)}/orders`, { params }) as Promise<ApiResponse<{
+  return apiClient.get<ApiResponse<{
     project_code: string
     orders: any[]
     total_count: number
-  }>>
+  }>>(`/projects/${encodeURIComponent(projectCode)}/orders`, { params })
 }
 
 /**
@@ -307,13 +313,13 @@ export const getDepartmentHierarchy = async (
   level2: Record<string, string[]>
   level3: Record<string, string[]>
 }>> => {
-  return apiClient.get('/departments/hierarchy', {
-    params: { file_path: filePath }
-  }) as Promise<ApiResponse<{
+  return apiClient.get<ApiResponse<{
     level1: string[]
     level2: Record<string, string[]>
     level3: Record<string, string[]>
-  }>>
+  }>>('/departments/hierarchy', {
+    params: { file_path: filePath }
+  })
 }
 
 /**
@@ -346,12 +352,12 @@ export const getDepartmentList = async (
     params.months = months.join(',')
   }
 
-  return apiClient.get('/departments/list', { params }) as Promise<ApiResponse<{
+  return apiClient.get<ApiResponse<{
     level: number
     parent?: string
     departments: any[]
     total_count: number
-  }>>
+  }>>('/departments/list', { params })
 }
 
 /**
@@ -376,7 +382,7 @@ export const getDepartmentDetails = async (
     params.months = months.join(',')
   }
 
-  return apiClient.get('/departments/details', { params }) as Promise<ApiResponse<any>>
+  return apiClient.get<ApiResponse<any>>('/departments/details', { params })
 }
 
 /**
@@ -418,7 +424,7 @@ export const getLevel1DepartmentStatistics = async (
     params.months = months.join(',')
   }
 
-  return apiClient.get('/departments/level1/statistics', { params }) as Promise<ApiResponse<{
+  return apiClient.get<ApiResponse<{
     department_name: string
     total_travel_cost: number
     attendance_days_distribution: Record<string, number>
@@ -437,7 +443,7 @@ export const getLevel1DepartmentStatistics = async (
       late_after_1930_count: number
       total_cost: number
     }>
-  }>>
+  }>>('/departments/level1/statistics', { params })
 }
 
 /**
@@ -461,10 +467,10 @@ export const getAnomalies = async (
     params.months = months.join(',')
   }
 
-  return apiClient.get('/anomalies', { params }) as Promise<ApiResponse<{
+  return apiClient.get<ApiResponse<{
     anomalies: any[]
     total_count: number
-  }>>
+  }>>('/anomalies', { params })
 }
 
 // 导出 axios 实例供特殊情况使用

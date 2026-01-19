@@ -592,10 +592,10 @@ const Dashboard = () => {
       render: (value: number) => `${value.toFixed(1)} h`
     },
     {
-      title: '人数',
+      title: '人数（产生成本人员）',
       dataIndex: 'headcount',
       key: 'headcount',
-      width: 100,
+      width: 150,
       sorter: (a: DepartmentStat, b: DepartmentStat) => a.headcount - b.headcount,
       render: (value: number) => (
         <Tag color="blue">{value} 人</Tag>

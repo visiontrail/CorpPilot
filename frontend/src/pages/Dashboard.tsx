@@ -715,7 +715,7 @@ const Dashboard = () => {
       {/* 核心指标卡片 */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={12} lg={6}>
-          <Card hoverable>
+          <Card hoverable style={{ height: 120, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <Statistic
               title="总成本"
               value={data.summary.total_cost}
@@ -727,7 +727,7 @@ const Dashboard = () => {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card hoverable>
+          <Card hoverable style={{ height: 120, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <Statistic
               title="平均工时"
               value={data.summary.avg_work_hours}
@@ -739,7 +739,7 @@ const Dashboard = () => {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card variant="borderless" hoverable onClick={() => navigate('/anomalies')} style={{ cursor: 'pointer' }}>
+          <Card variant="borderless" hoverable onClick={() => navigate('/anomalies')} style={{ cursor: 'pointer', height: 120 }}>
             <Statistic
               title="异常记录"
               value={data.summary.anomaly_count}
@@ -753,7 +753,7 @@ const Dashboard = () => {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card hoverable>
+          <Card hoverable style={{ height: 120 }}>
             <Statistic
               title="超标订单"
               value={overStandardCount}

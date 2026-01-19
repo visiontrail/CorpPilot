@@ -375,6 +375,32 @@ const Dashboard = () => {
         show: true
       }
     },
+    graphic: [
+      {
+        type: 'text',
+        left: '15%',
+        top: '30%',
+        style: {
+          text: '小型高成本\n(人均成本高)',
+          fontSize: 12,
+          fill: '#999',
+          fontWeight: 'lighter',
+          lineHeight: 16
+        }
+      },
+      {
+        type: 'text',
+        right: '15%',
+        bottom: '30%',
+        style: {
+          text: '大型低成本\n(人均成本低)',
+          fontSize: 12,
+          fill: '#999',
+          fontWeight: 'lighter',
+          lineHeight: 16
+        }
+      }
+    ],
     series: [
       {
         type: 'scatter',

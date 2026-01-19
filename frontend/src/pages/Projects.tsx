@@ -113,6 +113,7 @@ const Projects = () => {
       fixed: 'left',
       width: 120,
       sorter: (a, b) => a.code.localeCompare(b.code),
+      render: (value: string) => value === 'nan' ? '未知编号' : value,
     },
     {
       title: '项目名称',
@@ -121,6 +122,7 @@ const Projects = () => {
       width: 250,
       ellipsis: true,
       sorter: (a, b) => a.name.localeCompare(b.name),
+      render: (value: string) => value === 'nan' ? '未知项目' : value,
     },
     {
       title: '总成本 (元)',

@@ -346,6 +346,7 @@ const Dashboard = () => {
     xAxis: {
       type: 'category',
       data: data.department_stats
+        .filter(item => item.dept !== '未知部门')
         .sort((a, b) => b.avg_hours - a.avg_hours)
         .slice(0, 15)
         .map(item => item.dept),
@@ -366,6 +367,7 @@ const Dashboard = () => {
         name: '平均工时',
         type: 'bar',
         data: data.department_stats
+          .filter(item => item.dept !== '未知部门')
           .sort((a, b) => b.avg_hours - a.avg_hours)
           .slice(0, 15)
           .map(item => item.avg_hours),
@@ -595,14 +597,16 @@ const Dashboard = () => {
       dataIndex: 'code',
       key: 'code',
       width: 120,
-      fixed: 'left' as const
+      fixed: 'left' as const,
+      render: (value: string) => value === 'nan' ? '未知编号' : value
     },
     {
       title: '项目名称',
       dataIndex: 'name',
       key: 'name',
       ellipsis: true,
-      width: 200
+      width: 200,
+      render: (value: string) => value === 'nan' ? '未知项目' : value
     },
     {
       title: '成本 (元)',

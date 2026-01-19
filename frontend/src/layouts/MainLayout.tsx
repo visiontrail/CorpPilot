@@ -122,42 +122,50 @@ const MainLayoutContent: React.FC<MainLayoutContentProps> = ({
         style={{
           borderRight: sidebarCollapsed ? 'none' : '1px solid #f0f0f0',
           padding: sidebarCollapsed ? 0 : '16px 12px',
+          height: '100vh',
+          position: 'fixed',
+          left: 0,
+          top: 0,
+          zIndex: 100,
+          overflow: 'hidden',
         }}
       >
-        <Space align="center" style={{ width: '100%', justifyContent: 'space-between', padding: '0 8px' }}>
-          <Space align="center" size={6}>
-            <Button
-              type="text"
-              size="small"
-              icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              onClick={toggleSidebar}
-              style={{ color: '#1f1f1f' }}
-              aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
-            />
-            <Title level={4} style={{ margin: 0 }}>统计月份</Title>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <Space align="center" style={{ width: '100%', justifyContent: 'space-between', padding: '0 8px', flexShrink: 0 }}>
+            <Space align="center" size={6}>
+              <Button
+                type="text"
+                size="small"
+                icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                onClick={toggleSidebar}
+                style={{ color: '#1f1f1f' }}
+                aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
+              />
+              <Title level={4} style={{ margin: 0 }}>统计月份</Title>
+            </Space>
+            <Button size="small" onClick={refreshMonths}>
+              刷新
+            </Button>
           </Space>
-          <Button size="small" onClick={refreshMonths}>
-            刷新
-          </Button>
-        </Space>
-        <div style={{ marginTop: 12 }}>
-          {availableMonths.length === 0 ? (
-            <Empty description="暂无数据" style={{ paddingTop: 20 }} />
-          ) : (
-            <Menu
-              className="month-menu"
-              mode="inline"
-              selectedKeys={selectedMonth ? [selectedMonth] : []}
-              onClick={(info) => {
-                selectMonth(info.key)
-              }}
-              items={monthItems}
-              style={{ borderInlineEnd: 'none', height: 'calc(100vh - 120px)', overflowY: 'auto' }}
-            />
-          )}
+          <div style={{ marginTop: 12, flex: 1, overflow: 'hidden', minHeight: 0 }}>
+            {availableMonths.length === 0 ? (
+              <Empty description="暂无数据" style={{ paddingTop: 20 }} />
+            ) : (
+              <Menu
+                className="month-menu"
+                mode="inline"
+                selectedKeys={selectedMonth ? [selectedMonth] : []}
+                onClick={(info) => {
+                  selectMonth(info.key)
+                }}
+                items={monthItems}
+                style={{ borderInlineEnd: 'none', height: '100%', overflowY: 'auto' }}
+              />
+            )}
+          </div>
         </div>
       </Sider>
-      <Layout>
+      <Layout style={{ marginLeft: sidebarCollapsed ? 0 : 320, transition: 'margin-left 0.2s' }}>
         <Header style={{
           display: 'flex',
           alignItems: 'center',
@@ -186,7 +194,7 @@ const MainLayoutContent: React.FC<MainLayoutContentProps> = ({
             style={{ flex: 1, minWidth: 0 }}
           />
         </Header>
-        <Content style={{ padding: '24px' }}>
+        <Content style={{ padding: '24px', overflow: 'auto' }}>
           <Outlet context={contextValue} />
         </Content>
         <Footer style={{ textAlign: 'center', background: '#f0f2f5' }}>

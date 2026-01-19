@@ -577,7 +577,7 @@ const Dashboard = () => {
       <Space style={{ marginBottom: 24, width: '100%', justifyContent: 'space-between' }}>
         <div>
           <Title level={2} style={{ margin: 0 }}>
-            CostMatrix 管理驾驶舱
+            CostMatrix 成本管理中心
           </Title>
           <Text type="secondary">
             当前统计月份: <Tag color="blue">{formatMonthDisplay(selectedMonth)}</Tag>

@@ -175,6 +175,7 @@ const Dashboard = () => {
         name: '部门成本',
         type: 'pie',
         radius: ['40%', '70%'],
+        center: ['40%', '50%'],
         avoidLabelOverlap: false,
         itemStyle: {
           borderRadius: 10,
@@ -183,7 +184,12 @@ const Dashboard = () => {
         },
         label: {
           show: true,
-          formatter: '{b}: {d}%'
+          formatter: (params: any) => {
+            const name = params.name || ''
+            const percent = params.percent || 0
+            const formattedName = name.replace(/(.{5})/g, '$1\n')
+            return `${formattedName}\n${percent}%`
+          }
         },
         emphasis: {
           label: {

@@ -1,7 +1,7 @@
 """CRUD operations for database access."""
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, time
 from typing import List, Optional, Tuple
 import pandas as pd
 from sqlalchemy import func, and_, or_, select, text, alias, case, bindparam
@@ -13,6 +13,29 @@ from app.db.models import (
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _serialize_anomaly_row(row, date_format: str = '%Y-%m-%d') -> dict:
+    """Normalize anomaly row with a fallback description."""
+    date_str = row.date.strftime(date_format)
+    detail = row.detail or ''
+    if not detail and row.travel_records:
+        try:
+            travel_records = json.loads(row.travel_records)
+        except Exception:
+            travel_records = []
+        if travel_records:
+            status_text = row.status or '上班'
+            detail = f"{row.name} 在 {date_str} 考勤显示{status_text}，但有 {','.join(travel_records)} 消费记录，存在时间和地点冲突"
+
+    return {
+        'date': date_str,
+        'name': row.name,
+        'dept': row.dept,
+        'type': row.type,
+        'status': row.status,
+        'detail': detail
+    }
 
 
 def calculate_file_hash(file_path: str) -> str:
@@ -166,6 +189,45 @@ def batch_insert_attendance(db: Session, upload_id: int, df: pd.DataFrame) -> in
     """Batch insert attendance records from DataFrame."""
     import pandas as pd
 
+    def _normalize_punch_time(punch_time):
+        """Convert mixed Excel time formats to zero-padded HH:MM:SS strings."""
+        if pd.isna(punch_time):
+            return None
+
+        if isinstance(punch_time, str):
+            punch_time = punch_time.strip()
+            if not punch_time:
+                return None
+            for fmt in ("%H:%M:%S", "%H:%M"):
+                try:
+                    return datetime.strptime(punch_time, fmt).strftime("%H:%M:%S")
+                except ValueError:
+                    continue
+            return punch_time
+
+        if isinstance(punch_time, pd.Timestamp):
+            return punch_time.to_pydatetime().strftime("%H:%M:%S")
+
+        if isinstance(punch_time, time):
+            return punch_time.strftime("%H:%M:%S")
+
+        if isinstance(punch_time, datetime):
+            return punch_time.strftime("%H:%M:%S")
+
+        if isinstance(punch_time, (int, float)):
+            try:
+                total_seconds = float(punch_time) * 24 * 3600
+                if total_seconds < 0:
+                    return None
+                hours = int(total_seconds // 3600) % 24
+                minutes = int((total_seconds % 3600) // 60)
+                seconds = int(round(total_seconds % 60))
+                return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            except Exception:
+                return None
+
+        return None
+
     records = []
     for _, row in df.iterrows():
         name = row['姓名']
@@ -192,10 +254,7 @@ def batch_insert_attendance(db: Session, upload_id: int, df: pd.DataFrame) -> in
         emp_id = get_or_create_employee(db, name, level1_id, level2_id, level3_id)
 
         # Extract latest_punch_time from '最晚打卡时间' column
-        latest_punch_time = None
-        punch_time = row.get('最晚打卡时间')
-        if pd.notna(punch_time) and isinstance(punch_time, str) and punch_time.strip():
-            latest_punch_time = punch_time.strip()
+        latest_punch_time = _normalize_punch_time(row.get('最晚打卡时间'))
 
         # Check if late after 19:30 from '最晚19:30之后' column
         is_late_after_1930 = False
@@ -338,17 +397,20 @@ def batch_insert_anomalies(db: Session, upload_id: int, anomalies: List[dict]) -
     """Batch insert anomaly records."""
     records = []
     for anomaly in anomalies:
-        dept_name = anomaly.get('dept', '未知部门')
+        dept_name = anomaly.get('dept') or anomaly.get('department') or '未知部门'
         level1_id = get_or_create_department(db, dept_name, level=1, parent_id=None)
         emp_id = get_or_create_employee(db, anomaly['name'], level1_id)
+        anomaly_type = anomaly.get('type') or anomaly.get('anomaly_type') or 'A'
+        description = anomaly.get('description') or anomaly.get('detail') or ''
+        travel_records = anomaly.get('travel_records', [])
         records.append({
             'upload_id': upload_id,
             'date': pd.to_datetime(anomaly['date']),
             'employee_id': emp_id,
-            'anomaly_type': anomaly.get('type', 'A'),
+            'anomaly_type': anomaly_type,
             'attendance_status': anomaly.get('attendance_status', '上班'),
-            'travel_records': json.dumps(anomaly.get('travel_records', [])),
-            'description': anomaly.get('detail', '')
+            'travel_records': json.dumps(travel_records),
+            'description': description
         })
 
     db.bulk_insert_mappings(Anomaly, records)
@@ -448,7 +510,9 @@ def get_anomalies(
         Employee.name.label('name'),
         Department.name.label('dept'),
         Anomaly.anomaly_type.label('type'),
+        Anomaly.attendance_status.label('status'),
         Anomaly.description.label('detail'),
+        Anomaly.travel_records.label('travel_records'),
     ).join(
         Employee, Anomaly.employee_id == Employee.id
     ).join(
@@ -457,16 +521,7 @@ def get_anomalies(
         Anomaly.date.desc()
     ).limit(limit).all()
 
-    return [
-        {
-            'date': row.date.strftime('%Y-%m-%d'),
-            'name': row.name,
-            'dept': row.dept,
-            'type': row.type,
-            'detail': row.detail or ''
-        }
-        for row in result
-    ]
+    return [_serialize_anomaly_row(row) for row in result]
 
 
 def get_available_months(db: Session, file_path: str) -> List[str]:
@@ -1470,7 +1525,8 @@ def get_anomalies_by_month(db: Session, month: str, limit: int = 50) -> List[dic
         Department.name.label('dept'),
         Anomaly.anomaly_type.label('type'),
         Anomaly.attendance_status.label('status'),
-        Anomaly.description.label('detail')
+        Anomaly.description.label('detail'),
+        Anomaly.travel_records.label('travel_records')
     ).join(
         Employee, Anomaly.employee_id == Employee.id
     ).join(
@@ -1486,17 +1542,7 @@ def get_anomalies_by_month(db: Session, month: str, limit: int = 50) -> List[dic
         Anomaly.date.desc()
     ).limit(limit).all()
 
-    return [
-        {
-            'date': row.date.strftime('%Y/%m/%d'),
-            'name': row.name,
-            'dept': row.dept,
-            'type': row.type,
-            'status': row.status,
-            'detail': row.detail or ''
-        }
-        for row in results
-    ]
+    return [_serialize_anomaly_row(row, '%Y/%m/%d') for row in results]
 
 
 def get_total_project_count_by_month(db: Session, month: str) -> int:

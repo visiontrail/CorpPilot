@@ -1432,7 +1432,8 @@ def get_department_stats_by_month(db: Session, month: str, top_n: int = 15) -> L
         dept_id = db.query(Department.id).filter_by(name=row.dept).first()
 
         attendance_query = db.query(
-            func.avg(AttendanceRecord.work_hours).label('avg_hours')
+            func.avg(case((AttendanceRecord.status == '上班', AttendanceRecord.work_hours), else_=None)).label('avg_hours'),
+            func.avg(case((AttendanceRecord.status.like('%公休日上班%'), AttendanceRecord.work_hours), else_=None)).label('holiday_avg_hours')
         ).join(
             Employee, AttendanceRecord.employee_id == Employee.id
         ).filter(
@@ -1445,11 +1446,13 @@ def get_department_stats_by_month(db: Session, month: str, top_n: int = 15) -> L
 
         avg_hours_result = attendance_query.first()
         avg_hours = float(avg_hours_result.avg_hours or 0) if avg_hours_result else 0
+        holiday_avg_hours = float(avg_hours_result.holiday_avg_hours or 0) if avg_hours_result else 0
 
         dept_stats.append({
             'dept': row.dept,
             'cost': round(float(row.cost or 0), 2),
             'avg_hours': round(avg_hours, 2),
+            'holiday_avg_hours': round(holiday_avg_hours, 2),
             'headcount': row.headcount or 0,
             'flight_cost': round(float(row.flight_cost or 0), 2),
             'hotel_cost': round(float(row.hotel_cost or 0), 2),
@@ -1742,6 +1745,7 @@ def get_dashboard_data(
                 'dept': item['dept'],
                 'cost': item['cost'],
                 'avg_hours': item['avg_hours'],
+                'holiday_avg_hours': item.get('holiday_avg_hours', 0),
                 'headcount': item['headcount']
             }
             for item in department_stats

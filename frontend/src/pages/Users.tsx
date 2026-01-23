@@ -219,7 +219,7 @@ const Users = () => {
                 label={editingUser ? '新密码（留空则不修改）' : '密码'}
                 name="password"
                 rules={[
-                  ({ getFieldValue }) => ({
+                  () => ({
                     validator(_, value) {
                       if (!value && editingUser) return Promise.resolve()
                       if (value && value.length < 6) {

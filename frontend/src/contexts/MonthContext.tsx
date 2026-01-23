@@ -19,29 +19,60 @@ interface MonthProviderProps {
 
 export const MonthProvider: React.FC<MonthProviderProps> = ({ children }) => {
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([])
+  const [pendingMonths, setPendingMonthsState] = useState<string[]>([])
+
+  const normalizeSelection = useCallback((selection: string[], available: string[]) => {
+    return available.filter(month => selection.includes(month))
+  }, [])
+
+  const isSameSelection = useCallback((a: string[], b: string[]) => {
+    return a.length === b.length && a.every(item => b.includes(item))
+  }, [])
 
   const refreshMonths = useCallback(async () => {
     try {
       const res = await getAvailableMonths()
       if (res.success && res.data) {
-        setAvailableMonths(res.data)
-        if (res.data.length > 0) {
-          setSelectedMonth(res.data[res.data.length - 1] || null)
+        const months = res.data
+        setAvailableMonths(months)
+
+        const computeNextSelection = (current: string[]) => {
+          const normalized = normalizeSelection(current, months)
+          if (normalized.length > 0) return normalized
+          if (months.length > 0) return [months[months.length - 1]]
+          return []
         }
+
+        setPendingMonthsState((prev) => {
+          const next = computeNextSelection(prev)
+          return isSameSelection(prev, next) ? prev : next
+        })
+
+        setSelectedMonths((prev) => {
+          const next = computeNextSelection(prev)
+          return isSameSelection(prev, next) ? prev : next
+        })
       }
     } catch (error) {
       message.error('获取月份列表失败')
     }
-  }, [])
+  }, [isSameSelection, normalizeSelection])
 
   useEffect(() => {
     refreshMonths()
   }, [refreshMonths])
 
-  const selectMonth = useCallback((month: string | null) => {
-    setSelectedMonth(month)
+  const setPendingMonths = useCallback((months: string[]) => {
+    setPendingMonthsState(months)
   }, [])
+
+  const applySelectedMonths = useCallback(() => {
+    setSelectedMonths((prev) => {
+      if (isSameSelection(prev, pendingMonths)) return prev
+      return [...pendingMonths]
+    })
+  }, [isSameSelection, pendingMonths])
 
   const deleteMonth = useCallback(async (month: string) => {
     Modal.confirm({
@@ -60,25 +91,23 @@ export const MonthProvider: React.FC<MonthProviderProps> = ({ children }) => {
             )
             // 刷新月份列表
             await refreshMonths()
-            // 如果删除的是当前选中的月份，清空选中状态
-            if (selectedMonth === month) {
-              setSelectedMonth(null)
-            }
           }
         } catch (error: any) {
           message.error(`删除失败: ${error.message}`)
         }
       }
     })
-  }, [refreshMonths, selectedMonth])
+  }, [refreshMonths])
 
   const contextValue: MonthContextValue = useMemo(() => ({
     availableMonths,
-    selectedMonth,
-    selectMonth,
+    selectedMonths,
+    pendingMonths,
+    setPendingMonths,
+    applySelectedMonths,
     refreshMonths,
     deleteMonth
-  }), [availableMonths, selectedMonth, selectMonth, refreshMonths, deleteMonth])
+  }), [availableMonths, selectedMonths, pendingMonths, setPendingMonths, applySelectedMonths, refreshMonths, deleteMonth])
 
   return <MonthContext.Provider value={contextValue}>{children}</MonthContext.Provider>
 }

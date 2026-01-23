@@ -35,7 +35,7 @@ const { Title, Text } = Typography
 
 const Projects = () => {
   const navigate = useNavigate()
-  const { selectedMonth } = useMonthContext()
+  const { selectedMonths } = useMonthContext()
 
   const [projects, setProjects] = useState<ProjectDetail[]>([])
   const [loading, setLoading] = useState(false)
@@ -45,15 +45,15 @@ const Projects = () => {
   const [drawerVisible, setDrawerVisible] = useState(false)
 
   useEffect(() => {
-    if (selectedMonth) {
+    if (selectedMonths.length > 0) {
       fetchProjects()
     } else {
       setProjects([])
     }
-  }, [selectedMonth])
+  }, [selectedMonths])
 
   const fetchProjects = async () => {
-    if (!selectedMonth) {
+    if (selectedMonths.length === 0) {
       message.warning('请先选择月份')
       return
     }
@@ -61,7 +61,7 @@ const Projects = () => {
     setLoading(true)
     try {
       // 调用API时不传file_path，传递months参数从数据库获取数据
-      const result = await getAllProjects('', [selectedMonth])
+      const result = await getAllProjects('', selectedMonths)
       if (result.success && result.data?.projects) {
         setProjects(result.data.projects)
       } else {
@@ -75,7 +75,7 @@ const Projects = () => {
   }
 
   const handleViewOrders = async (project: ProjectDetail) => {
-    if (!selectedMonth) {
+    if (selectedMonths.length === 0) {
       message.warning('请先选择月份')
       return
     }
@@ -85,7 +85,7 @@ const Projects = () => {
     setOrdersLoading(true)
 
     try {
-      const result = await getProjectOrders('', project.code, [selectedMonth])
+      const result = await getProjectOrders('', project.code, selectedMonths)
       if (result.success && result.data?.orders) {
         setOrders(result.data.orders)
       } else {
@@ -302,10 +302,10 @@ const Projects = () => {
     },
   ]
 
-  if (!selectedMonth) {
+  if (selectedMonths.length === 0) {
     return (
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
-        <Empty description="请从左侧选择月份查看项目数据" />
+        <Empty description="请从左侧选择月份（可多选）查看项目数据" />
       </div>
     )
   }
@@ -320,6 +320,12 @@ const Projects = () => {
           <Title level={2} style={{ margin: 0 }}>
             项目详情
           </Title>
+          <Space align="center" size={[4, 4]} wrap>
+            <Text type="secondary">当前月份:</Text>
+            {selectedMonths.map(month => (
+              <Tag key={month} color="blue">{month}</Tag>
+            ))}
+          </Space>
           <Tag color="purple">共 {projects.length} 个项目</Tag>
         </Space>
         <Button onClick={fetchProjects} loading={loading}>

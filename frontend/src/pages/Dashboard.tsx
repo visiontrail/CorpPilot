@@ -41,7 +41,7 @@ const Dashboard = () => {
   const [data, setData] = useState<AnalysisResult | null>(null)
   const [exporting, setExporting] = useState(false)
   const [loadingData, setLoadingData] = useState(false)
-  const { selectedMonth, availableMonths, refreshMonths } = useMonthContext()
+  const { selectedMonths, availableMonths, refreshMonths } = useMonthContext()
 
   // ECharts 图表引用，用于导出图片
   const departmentCostChartRef = useRef<any>(null)
@@ -55,22 +55,22 @@ const Dashboard = () => {
   }, [refreshMonths])
 
   useEffect(() => {
-    if (selectedMonth) {
+    if (selectedMonths.length > 0) {
       fetchData()
     } else {
       setData(null)
     }
-  }, [selectedMonth])
+  }, [selectedMonths])
 
   const fetchData = async () => {
-    if (!selectedMonth) {
+    if (selectedMonths.length === 0) {
       return
     }
 
     setLoadingData(true)
     try {
       // 调用数据库分析API，传递月份参数
-      const result = await analyzeExcel(undefined, { months: [selectedMonth] })
+      const result = await analyzeExcel(undefined, { months: selectedMonths })
       if (result.success && result.data) {
         setData(result.data)
       } else {
@@ -84,7 +84,7 @@ const Dashboard = () => {
   }
 
   const handleExport = async () => {
-    if (!selectedMonth) {
+    if (selectedMonths.length === 0) {
       message.warning('请先选择月份')
       return
     }
@@ -101,7 +101,7 @@ const Dashboard = () => {
   }
 
   // 空状态 - 没有选择月份
-  if (!selectedMonth || availableMonths.length === 0) {
+  if (selectedMonths.length === 0 || availableMonths.length === 0) {
     return (
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
         <Empty
@@ -124,7 +124,9 @@ const Dashboard = () => {
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
         <Space direction="vertical" size="middle">
           <Spin size="large" />
-          <Text type="secondary">正在加载 {selectedMonth} 数据...</Text>
+          <Text type="secondary">
+            正在加载 {selectedMonths.map(formatMonthDisplay).join('、')} 数据...
+          </Text>
         </Space>
       </div>
     )
@@ -784,7 +786,7 @@ const Dashboard = () => {
     }
   ]
 
-  const formatMonthDisplay = (month: string) => {
+  function formatMonthDisplay(month: string) {
     const [year, monthNum] = month.split('-')
     return `${year}年${monthNum}月`
   }
@@ -797,9 +799,12 @@ const Dashboard = () => {
           <Title level={2} style={{ margin: 0 }}>
             CostMatrix 成本管理中心
           </Title>
-          <Text type="secondary">
-            当前统计月份: <Tag color="blue">{formatMonthDisplay(selectedMonth)}</Tag>
-          </Text>
+          <Space align="center" size={[4, 4]} wrap>
+            <Text type="secondary">当前统计月份:</Text>
+            {selectedMonths.map(month => (
+              <Tag key={month} color="blue">{formatMonthDisplay(month)}</Tag>
+            ))}
+          </Space>
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loadingData}>

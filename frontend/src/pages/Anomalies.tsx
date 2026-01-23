@@ -28,21 +28,21 @@ const { Title, Text } = Typography
 
 const Anomalies = () => {
   const navigate = useNavigate()
-  const { selectedMonth } = useMonthContext()
+  const { selectedMonths } = useMonthContext()
 
   const [anomalies, setAnomalies] = useState<AnomalyDetail[]>([])
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (selectedMonth) {
+    if (selectedMonths.length > 0) {
       fetchAnomalies()
     } else {
       setAnomalies([])
     }
-  }, [selectedMonth])
+  }, [selectedMonths])
 
   const fetchAnomalies = async () => {
-    if (!selectedMonth) {
+    if (selectedMonths.length === 0) {
       message.warning('请先选择月份')
       return
     }
@@ -50,7 +50,7 @@ const Anomalies = () => {
     setLoading(true)
     try {
       // 调用API时不传file_path，传递months参数从数据库获取数据
-      const result = await getAnomalies('', [selectedMonth])
+      const result = await getAnomalies('', selectedMonths)
       if (result.success && result.data?.anomalies) {
         setAnomalies(result.data.anomalies)
       } else {
@@ -153,10 +153,10 @@ const Anomalies = () => {
     },
   ]
 
-  if (!selectedMonth) {
+  if (selectedMonths.length === 0) {
     return (
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
-        <Empty description="请从左侧选择月份查看异常记录" />
+        <Empty description="请从左侧选择月份（可多选）查看异常记录" />
       </div>
     )
   }
@@ -171,6 +171,12 @@ const Anomalies = () => {
           <Title level={2} style={{ margin: 0 }}>
             异常记录详情
           </Title>
+          <Space align="center" size={[4, 4]} wrap>
+            <Text type="secondary">当前月份:</Text>
+            {selectedMonths.map(month => (
+              <Tag key={month} color="blue">{month}</Tag>
+            ))}
+          </Space>
           <Tag color="red" icon={<WarningOutlined />}>
             共 {anomalies.length} 条异常
           </Tag>

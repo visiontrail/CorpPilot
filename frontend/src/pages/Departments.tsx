@@ -40,7 +40,7 @@ const { Title } = Typography
 
 const Departments = () => {
   const navigate = useNavigate()
-  const { selectedMonth } = useMonthContext()
+  const { selectedMonths } = useMonthContext()
 
   const [loading, setLoading] = useState(false)
   const [detailsLoading, setDetailsLoading] = useState(false)
@@ -54,27 +54,27 @@ const Departments = () => {
   const [level1Statistics, setLevel1Statistics] = useState<any>(null)
 
   useEffect(() => {
-    if (selectedMonth) {
+    if (selectedMonths.length > 0) {
       loadDepartments(1)
     } else {
       setDepartments([])
     }
-  }, [selectedMonth])
+  }, [selectedMonths])
 
   // 当进入二级部门页面时，加载一级部门统计数据
   useEffect(() => {
-    if (currentLevel === 2 && selectedLevel1 && selectedMonth) {
+    if (currentLevel === 2 && selectedLevel1 && selectedMonths.length > 0) {
       loadLevel1Statistics(selectedLevel1)
     } else {
       setLevel1Statistics(null)
     }
-  }, [currentLevel, selectedLevel1, selectedMonth])
+  }, [currentLevel, selectedLevel1, selectedMonths])
 
   const loadLevel1Statistics = async (level1Name: string) => {
-    if (!selectedMonth) return
+    if (selectedMonths.length === 0) return
     setStatsLoading(true)
     try {
-      const result = await getLevel1DepartmentStatistics('', level1Name, [selectedMonth])
+      const result = await getLevel1DepartmentStatistics('', level1Name, selectedMonths)
       if (result.success && result.data) {
         setLevel1Statistics(result.data)
       }
@@ -86,14 +86,14 @@ const Departments = () => {
   }
 
   const loadDepartments = async (level: 1 | 2 | 3, parent?: string) => {
-    if (!selectedMonth) {
+    if (selectedMonths.length === 0) {
       return
     }
 
     setLoading(true)
     try {
       // 调用API时不传file_path，传递months参数从数据库获取数据
-      const result = await getDepartmentList('', level, parent, [selectedMonth])
+      const result = await getDepartmentList('', level, parent, selectedMonths)
       if (result.success && result.data) {
         setDepartments(result.data.departments || [])
       }
@@ -105,13 +105,13 @@ const Departments = () => {
   }
 
   const loadDepartmentDetails = async (deptName: string, level: number) => {
-    if (!selectedMonth) {
+    if (selectedMonths.length === 0) {
       return
     }
 
     setDetailsLoading(true)
     try {
-      const result = await getDepartmentDetails('', deptName, level, [selectedMonth])
+      const result = await getDepartmentDetails('', deptName, level, selectedMonths)
       if (result.success && result.data) {
         setSelectedDepartment(result.data)
         setDrawerVisible(true)
@@ -167,7 +167,7 @@ const Departments = () => {
   }
 
   // 空状态 - 没有选择月份
-  if (!selectedMonth) {
+  if (selectedMonths.length === 0) {
     return (
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
         <Empty description="请从左侧选择月份查看部门数据" />

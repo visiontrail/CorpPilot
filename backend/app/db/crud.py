@@ -1,7 +1,7 @@
 """CRUD operations for database access."""
 import hashlib
 import json
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import List, Optional, Tuple
 import pandas as pd
 from sqlalchemy import func, and_, or_, select, text, alias, case, bindparam
@@ -13,6 +13,26 @@ from app.db.models import (
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _month_ranges(months: List[str]) -> List[Tuple[datetime, datetime]]:
+    """Convert YYYY-MM strings to (start, end) datetime ranges."""
+    ranges = []
+    for month in months:
+        try:
+            month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
+        except ValueError:
+            continue
+        month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+        ranges.append((month_start, month_end))
+    return ranges
+
+
+def _date_range_filter(column, ranges: List[Tuple[datetime, datetime]]):
+    """Build OR date filter for SQLAlchemy based on multiple ranges."""
+    if not ranges:
+        return None
+    return or_(*[and_(column >= start, column <= end) for start, end in ranges])
 
 
 def _serialize_anomaly_row(row, date_format: str = '%Y-%m-%d') -> dict:
@@ -1329,19 +1349,24 @@ def get_level1_department_statistics(
 
 def get_all_uploads_for_month(db: Session, month: str) -> List[int]:
     """Get all upload_ids that have data for the given month."""
-    from datetime import datetime, timedelta
+    ranges = _month_ranges([month])
+    return get_all_uploads_for_months(db, [month]) if ranges else []
 
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
 
+def get_all_uploads_for_months(db: Session, months: List[str]) -> List[int]:
+    """Get all upload_ids that have data for any of the given months."""
+    ranges = _month_ranges(months)
+    if not ranges:
+        return []
+
+    date_filter = _date_range_filter(TravelExpense.date, ranges)
     travel_upload_ids = db.query(TravelExpense.upload_id).filter(
-        TravelExpense.date >= month_start,
-        TravelExpense.date <= month_end
+        date_filter
     ).distinct().all()
 
+    attendance_filter = _date_range_filter(AttendanceRecord.date, ranges)
     attendance_upload_ids = db.query(AttendanceRecord.upload_id).filter(
-        AttendanceRecord.date >= month_start,
-        AttendanceRecord.date <= month_end
+        attendance_filter
     ).distinct().all()
 
     all_upload_ids = set(u[0] for u in travel_upload_ids)
@@ -1352,20 +1377,27 @@ def get_all_uploads_for_month(db: Session, month: str) -> List[int]:
 
 def get_dashboard_summary_by_month(db: Session, month: str) -> dict:
     """Get dashboard summary aggregated from ALL files for the given month."""
-    from datetime import datetime, timedelta
+    return get_dashboard_summary(db, [month])
 
-    upload_ids = get_all_uploads_for_month(db, month)
 
-    if not upload_ids:
+def get_dashboard_summary(db: Session, months: List[str]) -> dict:
+    """Get dashboard summary aggregated from ALL files for given months (multi-month supported)."""
+    ranges = _month_ranges(months)
+    upload_ids = get_all_uploads_for_months(db, months)
+
+    if not ranges or not upload_ids:
         return {
             'total_cost': 0,
             'total_orders': 0,
             'over_standard_count': 0,
-            'avg_work_hours': 0
+            'avg_work_hours': 0,
+            'holiday_avg_work_hours': 0,
+            'work_hours_count': 0,
+            'holiday_work_hours_count': 0
         }
 
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
+    date_filter_attendance = _date_range_filter(AttendanceRecord.date, ranges)
 
     total_cost_result = db.query(
         func.sum(TravelExpense.amount).label('total_cost'),
@@ -1373,25 +1405,24 @@ def get_dashboard_summary_by_month(db: Session, month: str) -> dict:
         func.sum(case((TravelExpense.is_over_standard == True, 1), else_=0)).label('over_standard_count')
     ).filter(
         TravelExpense.upload_id.in_(upload_ids),
-        TravelExpense.date >= month_start,
-        TravelExpense.date <= month_end
+        date_filter_travel
     ).first()
 
     avg_hours_result = db.query(
-        func.avg(AttendanceRecord.work_hours).label('avg_hours')
+        func.avg(AttendanceRecord.work_hours).label('avg_hours'),
+        func.count(AttendanceRecord.id).label('count')
     ).filter(
         AttendanceRecord.upload_id.in_(upload_ids),
-        AttendanceRecord.date >= month_start,
-        AttendanceRecord.date <= month_end,
+        date_filter_attendance,
         AttendanceRecord.work_hours != 0
     ).first()
 
     holiday_avg_hours_result = db.query(
-        func.avg(case((AttendanceRecord.status.like('%公休日上班%'), AttendanceRecord.work_hours), else_=None)).label('holiday_avg_hours')
+        func.avg(case((AttendanceRecord.status.like('%公休日上班%'), AttendanceRecord.work_hours), else_=None)).label('holiday_avg_hours'),
+        func.count(case((AttendanceRecord.status.like('%公休日上班%'), 1), else_=None)).label('holiday_count')
     ).filter(
         AttendanceRecord.upload_id.in_(upload_ids),
-        AttendanceRecord.date >= month_start,
-        AttendanceRecord.date <= month_end,
+        date_filter_attendance,
         AttendanceRecord.work_hours != 0
     ).first()
 
@@ -1400,21 +1431,27 @@ def get_dashboard_summary_by_month(db: Session, month: str) -> dict:
         'total_orders': total_cost_result.total_orders or 0,
         'over_standard_count': total_cost_result.over_standard_count or 0,
         'avg_work_hours': float(avg_hours_result.avg_hours or 0),
-        'holiday_avg_work_hours': float(holiday_avg_hours_result.holiday_avg_hours or 0)
+        'holiday_avg_work_hours': float(holiday_avg_hours_result.holiday_avg_hours or 0),
+        'work_hours_count': avg_hours_result.count or 0,
+        'holiday_work_hours_count': holiday_avg_hours_result.holiday_count or 0
     }
 
 
 def get_department_stats_by_month(db: Session, month: str, top_n: int = 15) -> List[dict]:
-    """Get department statistics aggregated from ALL files for the given month."""
-    from datetime import datetime, timedelta
+    """Backward-compatible single-month wrapper."""
+    return get_department_stats(db, [month], top_n)
 
-    upload_ids = get_all_uploads_for_month(db, month)
 
-    if not upload_ids:
+def get_department_stats(db: Session, months: List[str], top_n: int = 15) -> List[dict]:
+    """Get department statistics aggregated from ALL files for the given months."""
+    ranges = _month_ranges(months)
+    upload_ids = get_all_uploads_for_months(db, months)
+
+    if not ranges or not upload_ids:
         return []
 
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
+    date_filter_attendance = _date_range_filter(AttendanceRecord.date, ranges)
 
     results = db.query(
         Department.name.label('dept'),
@@ -1429,13 +1466,12 @@ def get_department_stats_by_month(db: Session, month: str, top_n: int = 15) -> L
         Department, Employee.department_id == Department.id
     ).filter(
         TravelExpense.upload_id.in_(upload_ids),
-        TravelExpense.date >= month_start,
-        TravelExpense.date <= month_end
+        date_filter_travel
     ).group_by(
         Department.id, Department.name
     ).order_by(
         func.sum(TravelExpense.amount).desc()
-    ).limit(top_n).all()
+    ).all()
 
     dept_stats = []
     for row in results:
@@ -1448,8 +1484,7 @@ def get_department_stats_by_month(db: Session, month: str, top_n: int = 15) -> L
             Employee, AttendanceRecord.employee_id == Employee.id
         ).filter(
             AttendanceRecord.upload_id.in_(upload_ids),
-            AttendanceRecord.date >= month_start,
-            AttendanceRecord.date <= month_end,
+            date_filter_attendance,
             AttendanceRecord.work_hours != 0,
             Employee.department_id == (dept_id.id if dept_id else None)
         )
@@ -1459,30 +1494,33 @@ def get_department_stats_by_month(db: Session, month: str, top_n: int = 15) -> L
         holiday_avg_hours = float(avg_hours_result.holiday_avg_hours or 0) if avg_hours_result else 0
 
         dept_stats.append({
-            'dept': row.dept,
-            'cost': round(float(row.cost or 0), 2),
-            'avg_hours': round(avg_hours, 2),
-            'holiday_avg_hours': round(holiday_avg_hours, 2),
-            'headcount': row.headcount or 0,
-            'flight_cost': round(float(row.flight_cost or 0), 2),
-            'hotel_cost': round(float(row.hotel_cost or 0), 2),
-            'train_cost': round(float(row.train_cost or 0), 2)
+          'dept': row.dept,
+          'cost': round(float(row.cost or 0), 2),
+          'avg_hours': round(avg_hours, 2),
+          'holiday_avg_hours': round(holiday_avg_hours, 2),
+          'headcount': row.headcount or 0,
+          'flight_cost': round(float(row.flight_cost or 0), 2),
+          'hotel_cost': round(float(row.hotel_cost or 0), 2),
+          'train_cost': round(float(row.train_cost or 0), 2)
         })
 
-    return dept_stats
+    return sorted(dept_stats, key=lambda x: x['cost'], reverse=True)[:top_n]
 
 
 def get_project_stats_by_month(db: Session, month: str, top_n: int = 20) -> List[dict]:
-    """Get project statistics aggregated from ALL files for the given month."""
-    from datetime import datetime, timedelta
+    """Backward-compatible single-month wrapper."""
+    return get_project_stats(db, [month], top_n)
 
-    upload_ids = get_all_uploads_for_month(db, month)
 
-    if not upload_ids:
+def get_project_stats(db: Session, months: List[str], top_n: int = 20) -> List[dict]:
+    """Get project statistics aggregated from ALL files for the given months."""
+    ranges = _month_ranges(months)
+    upload_ids = get_all_uploads_for_months(db, months)
+
+    if not ranges or not upload_ids:
         return []
 
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
 
     results = db.query(
         Project.code.label('code'),
@@ -1497,15 +1535,14 @@ def get_project_stats_by_month(db: Session, month: str, top_n: int = 20) -> List
         TravelExpense, TravelExpense.project_id == Project.id
     ).filter(
         TravelExpense.upload_id.in_(upload_ids),
-        TravelExpense.date >= month_start,
-        TravelExpense.date <= month_end
+        date_filter_travel
     ).group_by(
         Project.id, Project.code, Project.name
     ).order_by(
         func.sum(TravelExpense.amount).desc()
-    ).limit(top_n).all()
+    ).all()
 
-    return [
+    project_list = [
         {
             'code': row.code,
             'name': row.name,
@@ -1519,18 +1556,23 @@ def get_project_stats_by_month(db: Session, month: str, top_n: int = 20) -> List
         for row in results
     ]
 
+    return sorted(project_list, key=lambda x: x['cost'], reverse=True)[:top_n]
+
 
 def get_anomalies_by_month(db: Session, month: str, limit: int = 50) -> List[dict]:
-    """Get anomalies aggregated from ALL files for the given month."""
-    from datetime import datetime, timedelta
+    """Backward-compatible single-month wrapper."""
+    return get_anomalies(db, [month], limit)
 
-    upload_ids = get_all_uploads_for_month(db, month)
 
-    if not upload_ids:
+def get_anomalies(db: Session, months: List[str], limit: int = 200) -> List[dict]:
+    """Get anomalies aggregated from ALL files for the given months."""
+    ranges = _month_ranges(months)
+    upload_ids = get_all_uploads_for_months(db, months)
+
+    if not ranges or not upload_ids:
         return []
 
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+    date_filter_anomaly = _date_range_filter(Anomaly.date, ranges)
 
     results = db.query(
         Anomaly.date.label('date'),
@@ -1546,10 +1588,7 @@ def get_anomalies_by_month(db: Session, month: str, limit: int = 50) -> List[dic
         Department, Employee.department_id == Department.id
     ).filter(
         Anomaly.upload_id.in_(upload_ids),
-        Anomaly.date >= month_start,
-        Anomaly.date <= month_end,
-        # 只显示真正的异常：考勤状态精确为"上班"的记录
-        # 排除"公休日上班"等，因为那些不是真正的异常
+        date_filter_anomaly,
         Anomaly.attendance_status == '上班'
     ).order_by(
         Anomaly.date.desc()
@@ -1559,23 +1598,25 @@ def get_anomalies_by_month(db: Session, month: str, limit: int = 50) -> List[dic
 
 
 def get_total_project_count_by_month(db: Session, month: str) -> int:
-    """Get total count of distinct projects for the given month."""
-    from datetime import datetime, timedelta
+    """Backward-compatible single-month wrapper."""
+    return get_total_project_count(db, [month])
 
-    upload_ids = get_all_uploads_for_month(db, month)
 
-    if not upload_ids:
+def get_total_project_count(db: Session, months: List[str]) -> int:
+    """Get total count of distinct projects for the given months."""
+    ranges = _month_ranges(months)
+    upload_ids = get_all_uploads_for_months(db, months)
+
+    if not ranges or not upload_ids:
         return 0
 
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
 
     result = db.query(
         func.count(func.distinct(TravelExpense.project_id))
     ).filter(
         TravelExpense.upload_id.in_(upload_ids),
-        TravelExpense.date >= month_start,
-        TravelExpense.date <= month_end,
+        date_filter_travel,
         TravelExpense.project_id.isnot(None)
     ).scalar()
 
@@ -1583,12 +1624,16 @@ def get_total_project_count_by_month(db: Session, month: str) -> int:
 
 
 def get_order_breakdown_by_month(db: Session, month: str) -> dict:
-    """Get order breakdown by expense type (count, not cost) for the given month."""
-    from datetime import datetime, timedelta
+    """Backward-compatible single-month wrapper."""
+    return get_order_breakdown(db, [month])
 
-    upload_ids = get_all_uploads_for_month(db, month)
 
-    if not upload_ids:
+def get_order_breakdown(db: Session, months: List[str]) -> dict:
+    """Get order breakdown by expense type (count, not cost) for given months."""
+    ranges = _month_ranges(months)
+    upload_ids = get_all_uploads_for_months(db, months)
+
+    if not ranges or not upload_ids:
         return {
             'total': 0,
             'flight': 0,
@@ -1596,16 +1641,14 @@ def get_order_breakdown_by_month(db: Session, month: str) -> dict:
             'train': 0
         }
 
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
 
     result = db.query(
         TravelExpense.expense_type.label('expense_type'),
         func.count(TravelExpense.id).label('count')
     ).filter(
         TravelExpense.upload_id.in_(upload_ids),
-        TravelExpense.date >= month_start,
-        TravelExpense.date <= month_end
+        date_filter_travel
     ).group_by(
         TravelExpense.expense_type
     ).all()
@@ -1626,12 +1669,16 @@ def get_order_breakdown_by_month(db: Session, month: str) -> dict:
 
 
 def get_over_standard_breakdown_by_month(db: Session, month: str) -> dict:
-    """Get over standard order breakdown by expense type for the given month."""
-    from datetime import datetime, timedelta
+    """Backward-compatible single-month wrapper."""
+    return get_over_standard_breakdown(db, [month])
 
-    upload_ids = get_all_uploads_for_month(db, month)
 
-    if not upload_ids:
+def get_over_standard_breakdown(db: Session, months: List[str]) -> dict:
+    """Get over standard order breakdown by expense type for the given months."""
+    ranges = _month_ranges(months)
+    upload_ids = get_all_uploads_for_months(db, months)
+
+    if not ranges or not upload_ids:
         return {
             'total': 0,
             'flight': 0,
@@ -1639,16 +1686,14 @@ def get_over_standard_breakdown_by_month(db: Session, month: str) -> dict:
             'train': 0
         }
 
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
 
     result = db.query(
         TravelExpense.expense_type.label('expense_type'),
         func.count(TravelExpense.id).label('count')
     ).filter(
         TravelExpense.upload_id.in_(upload_ids),
-        TravelExpense.date >= month_start,
-        TravelExpense.date <= month_end,
+        date_filter_travel,
         TravelExpense.is_over_standard == True
     ).group_by(
         TravelExpense.expense_type
@@ -1670,24 +1715,27 @@ def get_over_standard_breakdown_by_month(db: Session, month: str) -> dict:
 
 
 def get_flight_over_type_breakdown_by_month(db: Session, month: str) -> dict:
-    """Get flight over type breakdown for the given month."""
-    from datetime import datetime, timedelta
+    """Backward-compatible single-month wrapper."""
+    return get_flight_over_type_breakdown(db, [month])
+
+
+def get_flight_over_type_breakdown(db: Session, months: List[str]) -> dict:
+    """Get flight over type breakdown for the given months."""
     import re
 
-    upload_ids = get_all_uploads_for_month(db, month)
+    ranges = _month_ranges(months)
+    upload_ids = get_all_uploads_for_months(db, months)
 
-    if not upload_ids:
+    if not ranges or not upload_ids:
         return {}
 
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
 
     results = db.query(
         TravelExpense.over_type.label('over_type')
     ).filter(
         TravelExpense.upload_id.in_(upload_ids),
-        TravelExpense.date >= month_start,
-        TravelExpense.date <= month_end,
+        date_filter_travel,
         TravelExpense.expense_type == 'flight',
         TravelExpense.is_over_standard == True,
         TravelExpense.over_type.isnot(None),
@@ -1697,17 +1745,14 @@ def get_flight_over_type_breakdown_by_month(db: Session, month: str) -> dict:
     breakdown = {}
     for row in results:
         if row.over_type:
-            # 处理可能包含多个标签的 over_type 字段（如 "超折扣 超时间"）
             raw = str(row.over_type)
             tokens = []
 
-            # 常见分隔符拆分
             for part in re.split(r'[;,，、/\\s]+', raw):
                 cleaned = part.strip()
                 if cleaned and '超' in cleaned:
                     tokens.append(cleaned)
 
-            # 兜底：处理未显式分隔但包含关键字的场景
             for keyword in ['超折扣', '超时间']:
                 if keyword in raw and keyword not in tokens:
                     tokens.append(keyword)
@@ -1726,20 +1771,19 @@ def get_dashboard_data(
 ) -> dict:
     """
     Get dashboard data with optional date filters.
-    Currently supports single month filtering via the months parameter.
+    Supports single or multiple months via the months parameter.
     """
-    if not months or len(months) != 1:
-        raise ValueError("Currently only single month filtering is supported")
+    if not months:
+        raise ValueError("months parameter is required")
 
-    month = months[0]
-    summary = get_dashboard_summary_by_month(db, month)
-    department_stats = get_department_stats_by_month(db, month, top_n=15)
-    project_stats = get_project_stats_by_month(db, month, top_n=20)
-    anomalies = get_anomalies_by_month(db, month, limit=50)
-    total_project_count = get_total_project_count_by_month(db, month)
-    order_breakdown = get_order_breakdown_by_month(db, month)
-    over_standard_breakdown = get_over_standard_breakdown_by_month(db, month)
-    flight_over_type_breakdown = get_flight_over_type_breakdown_by_month(db, month)
+    summary = get_dashboard_summary(db, months)
+    department_stats = get_department_stats(db, months, top_n=15)
+    project_stats = get_project_stats(db, months, top_n=20)
+    anomalies = get_anomalies(db, months, limit=200)
+    total_project_count = get_total_project_count(db, months)
+    order_breakdown = get_order_breakdown(db, months)
+    over_standard_breakdown = get_over_standard_breakdown(db, months)
+    flight_over_type_breakdown = get_flight_over_type_breakdown(db, months)
 
     return {
         'summary': {
@@ -1795,15 +1839,20 @@ def get_department_list_from_db(
     Returns:
         List of department items with person_count, total_cost, avg_work_hours
     """
-    if not months or len(months) != 1:
-        raise ValueError("Currently only single month filtering is supported")
+    if not months:
+        raise ValueError("Months parameter is required")
 
-    month = months[0]
+    ranges = _month_ranges(months)
+    if not ranges:
+        return []
 
-    # Get upload IDs for the given month
-    upload_ids = get_all_uploads_for_month(db, month)
+    # Get upload IDs for the given months
+    upload_ids = get_all_uploads_for_months(db, months)
     if not upload_ids:
         return []
+
+    date_filter_attendance = _date_range_filter(AttendanceRecord.date, ranges)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
 
     # Determine which department level to query
     dept_level_map = {1: 'department_id', 2: 'level2_department_id', 3: 'level3_department_id'}
@@ -1813,7 +1862,11 @@ def get_department_list_from_db(
         raise ValueError(f"Invalid department level: {level}")
 
     # Build query conditions
-    where_clauses = [AttendanceRecord.upload_id.in_(upload_ids)]
+    where_clauses = [
+        AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance
+    ]
+    where_clauses = [c for c in where_clauses if c is not None]
 
     # Get departments with employee count
     dept_join_map = {
@@ -1861,6 +1914,8 @@ def get_department_list_from_db(
 
         # Query travel expenses for this department
         travel_where = [TravelExpense.upload_id.in_(upload_ids)]
+        if date_filter_travel is not None:
+            travel_where.append(date_filter_travel)
         dept_expense_join_map = {
             1: Department.id == Employee.department_id,
             2: Department.id == Employee.level2_department_id,
@@ -1915,15 +1970,21 @@ def get_department_details_from_db(
     Returns:
         Department detail metrics dict or None if not found
     """
-    if not months or len(months) != 1:
-        raise ValueError("Currently only single month filtering is supported")
+    if not months:
+        raise ValueError("Months parameter is required")
 
-    month = months[0]
+    ranges = _month_ranges(months)
+    if not ranges:
+        return None
 
-    # Get upload IDs for the given month
-    upload_ids = get_all_uploads_for_month(db, month)
+    # Get upload IDs for the given months
+    upload_ids = get_all_uploads_for_months(db, months)
     if not upload_ids:
         return None
+
+    date_filter_attendance = _date_range_filter(AttendanceRecord.date, ranges)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
+    date_filter_anomaly = _date_range_filter(Anomaly.date, ranges)
 
     # Get the department
     dept = db.query(Department).filter_by(name=department_name).first()
@@ -1939,8 +2000,10 @@ def get_department_details_from_db(
 
     where_clauses = [
         Department.name == department_name,
-        AttendanceRecord.upload_id.in_(upload_ids)
+        AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance
     ]
+    where_clauses = [c for c in where_clauses if c is not None]
 
     # Get basic statistics
     result = db.query(
@@ -2006,6 +2069,7 @@ def get_department_details_from_db(
         Department.name == department_name,
         AttendanceRecord.status.like('%公休日上班%'),
         AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance if date_filter_attendance is not None else True,
         AttendanceRecord.work_hours.isnot(None),
         AttendanceRecord.work_hours != 0
     ).scalar() or 0
@@ -2020,14 +2084,17 @@ def get_department_details_from_db(
     ).filter(
         Department.name == department_name,
         AttendanceRecord.is_late_after_1930 == True,
-        AttendanceRecord.upload_id.in_(upload_ids)
+        AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance if date_filter_attendance is not None else True
     ).scalar() or 0
 
     # Get travel cost
     travel_where = [
         Department.name == department_name,
-        TravelExpense.upload_id.in_(upload_ids)
+        TravelExpense.upload_id.in_(upload_ids),
+        date_filter_travel
     ]
+    travel_where = [c for c in travel_where if c is not None]
     travel_cost = db.query(func.sum(TravelExpense.amount)).select_from(
         TravelExpense
     ).join(
@@ -2055,7 +2122,8 @@ def get_department_details_from_db(
     ).filter(
         Department.name == department_name,
         AttendanceRecord.status.like('%请假%'),
-        AttendanceRecord.upload_id.in_(upload_ids)
+        AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance if date_filter_attendance is not None else True
     ).scalar() or 0
 
     # Get anomaly days
@@ -2067,7 +2135,8 @@ def get_department_details_from_db(
         Department, dept_join_map[level]
     ).filter(
         Department.name == department_name,
-        Anomaly.upload_id.in_(upload_ids)
+        Anomaly.upload_id.in_(upload_ids),
+        date_filter_anomaly if date_filter_anomaly is not None else True
     ).scalar() or 0
 
     # Get attendance days distribution
@@ -2082,7 +2151,8 @@ def get_department_details_from_db(
         ).filter(
             Department.name == department_name,
             AttendanceRecord.status.like(f'%{status}%'),
-            AttendanceRecord.upload_id.in_(upload_ids)
+            AttendanceRecord.upload_id.in_(upload_ids),
+            date_filter_attendance if date_filter_attendance is not None else True
         ).scalar() or 0
         if count > 0:
             attendance_dist[status] = count
@@ -2100,7 +2170,8 @@ def get_department_details_from_db(
     ).filter(
         Department.name == department_name,
         AttendanceRecord.status == '出差',
-        AttendanceRecord.upload_id.in_(upload_ids)
+        AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance if date_filter_attendance is not None else True
     ).group_by(Employee.name).order_by(
         func.count(func.distinct(func.date(AttendanceRecord.date))).desc()
     ).limit(10).all()
@@ -2122,7 +2193,8 @@ def get_department_details_from_db(
         Department, dept_join_map[level]
     ).filter(
         Department.name == department_name,
-        Anomaly.upload_id.in_(upload_ids)
+        Anomaly.upload_id.in_(upload_ids),
+        date_filter_anomaly if date_filter_anomaly is not None else True
     ).group_by(Employee.name).order_by(
         func.count(Anomaly.id).desc()
     ).limit(10).all()
@@ -2146,6 +2218,7 @@ def get_department_details_from_db(
         Department.name == department_name,
         AttendanceRecord.status == '上班',
         AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance if date_filter_attendance is not None else True,
         AttendanceRecord.work_hours.isnot(None),
         AttendanceRecord.work_hours != 0
     ).group_by(Employee.name).order_by(
@@ -2170,6 +2243,7 @@ def get_department_details_from_db(
     ).filter(
         Department.name == department_name,
         AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance if date_filter_attendance is not None else True,
         AttendanceRecord.latest_punch_time.isnot(None)
     ).group_by(Employee.name).order_by(
         func.max(AttendanceRecord.latest_punch_time).desc()
@@ -2216,19 +2290,19 @@ def get_all_projects_from_db(
     Returns:
         List of project detail dicts
     """
-    if not months or len(months) != 1:
-        raise ValueError("Currently only single month filtering is supported")
+    if not months:
+        raise ValueError("Months parameter is required")
 
-    month = months[0]
+    ranges = _month_ranges(months)
+    if not ranges:
+        return []
 
-    # Get upload IDs for the given month
-    upload_ids = get_all_uploads_for_month(db, month)
+    # Get upload IDs for the given months
+    upload_ids = get_all_uploads_for_months(db, months)
     if not upload_ids:
         return []
 
-    from datetime import datetime, timedelta
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
 
     project_result = db.query(
         Project.id.label('project_id'),
@@ -2252,8 +2326,7 @@ def get_all_projects_from_db(
         Employee, TravelExpense.employee_id == Employee.id
     ).filter(
         TravelExpense.upload_id.in_(upload_ids),
-        TravelExpense.date >= month_start,
-        TravelExpense.date <= month_end
+        date_filter_travel if date_filter_travel is not None else True
     ).group_by(
         Project.id, Project.code, Project.name
     ).order_by(
@@ -2268,8 +2341,7 @@ def get_all_projects_from_db(
         ).filter(
             TravelExpense.project_id == row.project_id,
             TravelExpense.upload_id.in_(upload_ids),
-            TravelExpense.date >= month_start,
-            TravelExpense.date <= month_end
+            date_filter_travel if date_filter_travel is not None else True
         ).distinct().all()
         person_list = [p.name for p in persons]
 
@@ -2281,8 +2353,7 @@ def get_all_projects_from_db(
         ).filter(
             TravelExpense.project_id == row.project_id,
             TravelExpense.upload_id.in_(upload_ids),
-            TravelExpense.date >= month_start,
-            TravelExpense.date <= month_end
+            date_filter_travel if date_filter_travel is not None else True
         ).distinct().all()
         department_list = [d.name for d in departments]
 
@@ -2326,15 +2397,21 @@ def get_level1_department_statistics_from_db(
     Returns:
         Dictionary containing aggregated statistics
     """
-    if not months or len(months) != 1:
-        raise ValueError("Currently only single month filtering is supported")
+    if not months:
+        raise ValueError("Months parameter is required")
 
-    month = months[0]
+    ranges = _month_ranges(months)
+    if not ranges:
+        return {}
 
-    # Get upload IDs for the given month
-    upload_ids = get_all_uploads_for_month(db, month)
+    # Get upload IDs for the given months
+    upload_ids = get_all_uploads_for_months(db, months)
     if not upload_ids:
         return {}
+
+    date_filter_attendance = _date_range_filter(AttendanceRecord.date, ranges)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
+    date_filter_anomaly = _date_range_filter(Anomaly.date, ranges)
 
     # Get the level 1 department
     level1_dept = db.query(Department).filter_by(name=level1_name, level=1).first()
@@ -2353,7 +2430,8 @@ def get_level1_department_statistics_from_db(
         Employee, TravelExpense.employee_id == Employee.id
     ).filter(
         Employee.level2_department_id.in_(level2_dept_ids),
-        TravelExpense.upload_id.in_(upload_ids)
+        TravelExpense.upload_id.in_(upload_ids),
+        date_filter_travel if date_filter_travel is not None else True
     ).scalar() or 0
 
     # Query 2: Attendance status distribution for all level 2 departments
@@ -2362,43 +2440,56 @@ def get_level1_department_statistics_from_db(
         func.count(func.distinct(func.date(AttendanceRecord.date))).label('count')
     ).join(Employee, AttendanceRecord.employee_id == Employee.id).filter(
         Employee.level2_department_id.in_(level2_dept_ids),
-        AttendanceRecord.upload_id.in_(upload_ids)
+        AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance if date_filter_attendance is not None else True
     ).group_by(AttendanceRecord.status).all()
 
     attendance_days_distribution = {row.status: row.count for row in attendance_dist}
 
     # Query 3: Travel ranking (Top 10 by person)
-    travel_ranking_query = text("""
-    SELECT e.name, COUNT(DISTINCT DATE(a.date)) as travel_days
-    FROM fact_attendance a
-    JOIN dim_employee e ON a.employee_id = e.id
-    WHERE e.level2_department_id IN :dept_ids AND a.upload_id IN :upload_ids
-      AND a.status = '出差'
-    GROUP BY e.name
-    ORDER BY travel_days DESC
-    LIMIT 10
-    """).bindparams(bindparam('dept_ids', expanding=True), bindparam('upload_ids', expanding=True))
+    travel_ranking = db.query(
+        Employee.name.label('name'),
+        func.count(func.distinct(func.date(AttendanceRecord.date))).label('travel_days')
+    ).join(
+        AttendanceRecord, AttendanceRecord.employee_id == Employee.id
+    ).filter(
+        Employee.level2_department_id.in_(level2_dept_ids),
+        AttendanceRecord.upload_id.in_(upload_ids),
+        AttendanceRecord.status == '出差',
+        date_filter_attendance if date_filter_attendance is not None else True
+    ).group_by(
+        Employee.name
+    ).order_by(
+        func.count(func.distinct(func.date(AttendanceRecord.date))).desc()
+    ).limit(10).all()
 
     travel_ranking = [
         {'name': row.name, 'value': int(row.travel_days or 0), 'detail': f'{row.travel_days}天'}
-        for row in db.execute(travel_ranking_query, {'dept_ids': level2_dept_ids, 'upload_ids': upload_ids})
+        for row in travel_ranking
     ]
 
     # Query 4: Average hours ranking (Top 10 by person)
-    hours_ranking_query = text("""
-    SELECT e.name, AVG(a.work_hours) as avg_hours
-    FROM fact_attendance a
-    JOIN dim_employee e ON a.employee_id = e.id
-    WHERE e.level2_department_id IN :dept_ids AND a.upload_id IN :upload_ids
-      AND a.status = '上班' AND a.work_hours IS NOT NULL AND a.work_hours != 0
-    GROUP BY e.name
-    ORDER BY avg_hours DESC
-    LIMIT 10
-    """).bindparams(bindparam('dept_ids', expanding=True), bindparam('upload_ids', expanding=True))
+    avg_hours_ranking = db.query(
+        Employee.name.label('name'),
+        func.avg(AttendanceRecord.work_hours).label('avg_hours')
+    ).join(
+        AttendanceRecord, AttendanceRecord.employee_id == Employee.id
+    ).filter(
+        Employee.level2_department_id.in_(level2_dept_ids),
+        AttendanceRecord.upload_id.in_(upload_ids),
+        AttendanceRecord.status == '上班',
+        AttendanceRecord.work_hours.isnot(None),
+        AttendanceRecord.work_hours != 0,
+        date_filter_attendance if date_filter_attendance is not None else True
+    ).group_by(
+        Employee.name
+    ).order_by(
+        func.avg(AttendanceRecord.work_hours).desc()
+    ).limit(10).all()
 
     avg_hours_ranking = [
         {'name': row.name, 'value': round(float(row.avg_hours or 0), 2), 'detail': f'{row.avg_hours:.2f}小时'}
-        for row in db.execute(hours_ranking_query, {'dept_ids': level2_dept_ids, 'upload_ids': upload_ids})
+        for row in avg_hours_ranking
     ]
 
     # Query 5: Level 2 department stats (batch query with GROUP BY)
@@ -2476,19 +2567,19 @@ def get_project_orders_from_db(
     Returns:
         List of order record dicts
     """
-    if not months or len(months) != 1:
-        raise ValueError("Currently only single month filtering is supported")
+    if not months:
+        raise ValueError("Months parameter is required")
 
-    month = months[0]
+    ranges = _month_ranges(months)
+    if not ranges:
+        return []
 
-    # Get upload IDs for the given month
-    upload_ids = get_all_uploads_for_month(db, month)
+    # Get upload IDs for the given months
+    upload_ids = get_all_uploads_for_months(db, months)
     if not upload_ids:
         return []
 
-    from datetime import datetime, timedelta
-    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(seconds=1)
+    date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
 
     result = db.query(
         TravelExpense.id.label('id'),
@@ -2511,8 +2602,7 @@ def get_project_orders_from_db(
     ).filter(
         TravelExpense.upload_id.in_(upload_ids),
         Project.code == project_code,
-        TravelExpense.date >= month_start,
-        TravelExpense.date <= month_end
+        date_filter_travel if date_filter_travel is not None else True
     ).order_by(
         TravelExpense.date.desc()
     ).all()

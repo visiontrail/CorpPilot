@@ -165,8 +165,10 @@ export type UploadResponse = UploadRecord
 
 export interface MonthContextValue {
   availableMonths: string[]
-  selectedMonth: string | null
-  selectMonth: (month: string | null) => void
+  selectedMonths: string[]
+  pendingMonths: string[]
+  setPendingMonths: (months: string[]) => void
+  applySelectedMonths: () => void
   refreshMonths: () => Promise<void>
   deleteMonth: (month: string) => Promise<void>
 }

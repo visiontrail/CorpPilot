@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Layout, Menu, Typography, Button, Space, Empty, Tag, Modal, Form, Input, message } from 'antd'
+import { Layout, Menu, Typography, Button, Space, Empty, Tag, Modal, Form, Input, message, Checkbox } from 'antd'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { DashboardOutlined, UploadOutlined, RocketOutlined, MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, TeamOutlined, UserOutlined, LogoutOutlined } from '@ant-design/icons'
 import type { MonthContextValue } from '@/types'
@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { changePassword } from '@/services/api'
 
 const { Header, Content, Footer, Sider } = Layout
-const { Title } = Typography
+const { Title, Text } = Typography
 
 const MainLayout = () => {
   const navigate = useNavigate()
@@ -88,7 +88,16 @@ const MainLayoutContent: React.FC<MainLayoutContentProps> = ({
   user,
   onLogout,
 }) => {
-  const { availableMonths, selectedMonth, selectMonth, refreshMonths, deleteMonth } = useMonthContext()
+  const {
+    availableMonths,
+    selectedMonths,
+    pendingMonths,
+    setPendingMonths,
+    applySelectedMonths,
+    refreshMonths,
+    deleteMonth
+  } = useMonthContext()
+  const [multiSelectMode, setMultiSelectMode] = useState(false)
   const [pwdModalOpen, setPwdModalOpen] = useState(false)
   const [changingPwd, setChangingPwd] = useState(false)
   const [form] = Form.useForm()
@@ -99,40 +108,63 @@ const MainLayoutContent: React.FC<MainLayoutContentProps> = ({
 
   const contextValue: MonthContextValue = useMemo(() => ({
     availableMonths,
-    selectedMonth,
-    selectMonth,
+    selectedMonths,
+    pendingMonths,
+    setPendingMonths,
+    applySelectedMonths,
     refreshMonths,
     deleteMonth,
-  }), [availableMonths, selectedMonth, selectMonth, refreshMonths, deleteMonth])
+  }), [availableMonths, selectedMonths, pendingMonths, setPendingMonths, applySelectedMonths, refreshMonths, deleteMonth])
 
   const formatMonth = (month: string) => {
     const [year, monthNum] = month.split('-')
     return `${year}年${monthNum}月`
   }
 
-  const monthItems = availableMonths.map((month) => ({
-    key: month,
-    label: (
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontWeight: 600, color: '#1f1f1f' }}>
-            {formatMonth(month)}
-          </span>
-          <Button
-            type="text"
-            size="small"
-            icon={<DeleteOutlined />}
-            danger
-            onClick={(e) => {
-              e.stopPropagation()
-              deleteMonth(month)
-            }}
-            style={{ padding: '2px 4px', minWidth: 'auto' }}
-          />
-        </div>
-      </div>
-    ),
-  }))
+  const sortByAvailable = (months: string[]) => availableMonths.filter(m => months.includes(m))
+
+  const handleToggleMonth = (month: string) => {
+    if (!multiSelectMode) {
+      setPendingMonths(sortByAvailable([month]))
+      return
+    }
+
+    const exists = pendingMonths.includes(month)
+    const next = exists
+      ? pendingMonths.filter(m => m !== month)
+      : [...pendingMonths, month]
+    setPendingMonths(sortByAvailable(next))
+  }
+
+  const hasPendingChanges = useMemo(() => {
+    if (pendingMonths.length !== selectedMonths.length) return true
+    return pendingMonths.some(month => !selectedMonths.includes(month))
+  }, [pendingMonths, selectedMonths])
+
+  const handleToggleMultiSelect = () => {
+    setMultiSelectMode((prev) => {
+      const next = !prev
+      if (!next) {
+        const fallback =
+          pendingMonths[pendingMonths.length - 1] ??
+          selectedMonths[selectedMonths.length - 1] ??
+          availableMonths[availableMonths.length - 1]
+        if (fallback) {
+          setPendingMonths(sortByAvailable([fallback]))
+        }
+      }
+      return next
+    })
+  }
+
+  const handleConfirmSelection = () => {
+    applySelectedMonths()
+    if (hasPendingChanges) {
+      message.success('已应用所选月份')
+    } else {
+      message.info('月份选择未变化')
+    }
+  }
 
   const handlePasswordChange = async () => {
     try {
@@ -186,24 +218,94 @@ const MainLayoutContent: React.FC<MainLayoutContentProps> = ({
               />
               <Title level={4} style={{ margin: 0 }}>统计月份</Title>
             </Space>
-            <Button size="small" onClick={refreshMonths}>
-              刷新
-            </Button>
+            <Space size={8}>
+              <Button size="small" onClick={refreshMonths}>
+                刷新
+              </Button>
+              <Button
+                size="small"
+                type={multiSelectMode ? 'primary' : 'default'}
+                ghost={multiSelectMode}
+                onClick={handleToggleMultiSelect}
+              >
+                {multiSelectMode ? '退出多选' : '多选'}
+              </Button>
+              <Button
+                type="primary"
+                size="small"
+                onClick={handleConfirmSelection}
+                disabled={!hasPendingChanges}
+              >
+                确认
+              </Button>
+            </Space>
           </Space>
+          <div style={{ marginTop: 8, padding: '0 8px' }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>已应用月份</Text>
+            <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {selectedMonths.length > 0 ? (
+                selectedMonths.map(month => (
+                  <Tag key={month} color="blue" style={{ marginRight: 0 }}>
+                    {formatMonth(month)}
+                  </Tag>
+                ))
+              ) : (
+                <Text type="secondary" style={{ fontSize: 12 }}>未选择</Text>
+              )}
+            </div>
+          </div>
           <div style={{ marginTop: 12, flex: 1, overflow: 'hidden', minHeight: 0 }}>
             {availableMonths.length === 0 ? (
               <Empty description="暂无数据" style={{ paddingTop: 20 }} />
             ) : (
-              <Menu
-                className="month-menu"
-                mode="inline"
-                selectedKeys={selectedMonth ? [selectedMonth] : []}
-                onClick={(info) => {
-                  selectMonth(info.key)
-                }}
-                items={monthItems}
-                style={{ borderInlineEnd: 'none', height: '100%', overflowY: 'auto' }}
-              />
+              <div style={{ height: '100%', overflowY: 'auto', paddingRight: 4 }}>
+                {availableMonths.map(month => (
+                  <div
+                    key={month}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 10px',
+                      borderRadius: 8,
+                      border: pendingMonths.includes(month) ? '1px solid #1677ff' : '1px solid #f0f0f0',
+                      background: pendingMonths.includes(month) ? '#f0f7ff' : '#fff',
+                      marginBottom: 8,
+                      cursor: multiSelectMode ? 'default' : 'pointer',
+                    }}
+                    onClick={() => {
+                      if (!multiSelectMode) {
+                        handleToggleMonth(month)
+                      }
+                    }}
+                  >
+                    {multiSelectMode ? (
+                      <Checkbox
+                        checked={pendingMonths.includes(month)}
+                        onChange={() => handleToggleMonth(month)}
+                        style={{ fontWeight: 600, color: '#1f1f1f' }}
+                      >
+                        {formatMonth(month)}
+                      </Checkbox>
+                    ) : (
+                      <span style={{ fontWeight: 600, color: '#1f1f1f' }}>
+                        {formatMonth(month)}
+                      </span>
+                    )}
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      danger
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteMonth(month)
+                      }}
+                      style={{ padding: '2px 4px', minWidth: 'auto' }}
+                    />
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>

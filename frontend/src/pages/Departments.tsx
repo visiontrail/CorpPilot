@@ -375,7 +375,11 @@ const Departments = () => {
 
     // 平均工时排行榜
     const avgHoursRankingOption: EChartsOption = {
-      title: { text: '平均工时排行榜', left: 'center' },
+      title: {
+        text: '平均工时排行榜',
+        subtext: '仅统计工作日出勤的平均工时',
+        left: 'center',
+      },
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
       grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
       xAxis: { type: 'value', name: '小时' },
@@ -448,7 +452,7 @@ const Departments = () => {
         {/* 平均工时排行榜 */}
         <Row gutter={16} style={{ marginBottom: 16 }}>
           <Col span={24}>
-            <Card title="平均工时排行榜 (Top 10)">
+            <Card title="平均工时排行榜 (Top 10) —— 工作日">
               <ReactECharts option={avgHoursRankingOption} style={{ height: 300 }} />
             </Card>
           </Col>
@@ -549,7 +553,11 @@ const Departments = () => {
 
     // 最长工时排行榜
     const longestHoursOption: EChartsOption = {
-      title: { text: '最长工时排行榜', left: 'center' },
+      title: {
+        text: '最长工时排行榜',
+        subtext: '基于工作日平均工时',
+        left: 'center',
+      },
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
       grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
       xAxis: { type: 'value', name: '小时' },

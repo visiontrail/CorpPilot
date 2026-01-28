@@ -616,14 +616,14 @@ const Departments = () => {
           <Divider />
 
           <Descriptions title="考勤统计" bordered column={3}>
-            <Descriptions.Item label="工作日出勤天数">{selectedDepartment.workday_attendance_days} 天</Descriptions.Item>
-            <Descriptions.Item label="公休日上班天数">{selectedDepartment.weekend_work_days} 天</Descriptions.Item>
+            <Descriptions.Item label="工作日出勤天数">{attendance_days_distribution['上班'] || 0} 人天</Descriptions.Item>
+            <Descriptions.Item label="公休日上班天数">{attendance_days_distribution['公休日上班'] || 0} 人天</Descriptions.Item>
             <Descriptions.Item label="周末出勤次数">{selectedDepartment.weekend_attendance_count} 次</Descriptions.Item>
           </Descriptions>
 
           <Descriptions bordered column={3}>
-            <Descriptions.Item label="出差天数">{selectedDepartment.travel_days} 天</Descriptions.Item>
-            <Descriptions.Item label="请假天数">{selectedDepartment.leave_days} 天</Descriptions.Item>
+            <Descriptions.Item label="出差天数">{attendance_days_distribution['出差'] || 0} 人天</Descriptions.Item>
+            <Descriptions.Item label="请假天数">{attendance_days_distribution['请假'] || 0} 人天</Descriptions.Item>
             <Descriptions.Item label="异常天数">{selectedDepartment.anomaly_days} 天</Descriptions.Item>
           </Descriptions>
 

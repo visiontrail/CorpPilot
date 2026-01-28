@@ -1885,11 +1885,15 @@ def get_department_list_from_db(
             # For level 3, filter by Department.parent_id matching level 2 department
             parent_filter = Department.parent_id == parent_id
 
+    # Query attendance data with correct work hours calculation:
+    # - avg_work_hours: only for status='上班' (workday attendance)
+    # - holiday_avg_hours: only for status='公休日上班' (holiday work)
     result = db.query(
+        Department.id.label('dept_id'),
         Department.name.label('name'),
         func.count(func.distinct(Employee.id)).label('person_count'),
-        func.avg(AttendanceRecord.work_hours).label('avg_work_hours'),
-        func.avg(case((AttendanceRecord.status.like('%公休日上班%'), AttendanceRecord.work_hours), else_=None)).label('holiday_avg_hours')
+        func.avg(case((AttendanceRecord.status == '上班', AttendanceRecord.work_hours), else_=None)).label('avg_work_hours'),
+        func.avg(case((AttendanceRecord.status == '公休日上班', AttendanceRecord.work_hours), else_=None)).label('holiday_avg_hours')
     ).join(
         Employee, dept_join_map[level]
     ).join(
@@ -1904,50 +1908,68 @@ def get_department_list_from_db(
         result = result.filter(parent_filter)
 
     result = result.group_by(
-        Department.name
+        Department.id, Department.name
     ).all()
 
-    # Get travel costs for each department
-    departments = []
+    # Build a map from department id to employee ids for cost calculation
+    dept_employee_map = {}
     for row in result:
+        dept_id = row.dept_id
         dept_name = row.name
-
-        # Query travel expenses for this department
-        travel_where = [TravelExpense.upload_id.in_(upload_ids)]
-        if date_filter_travel is not None:
-            travel_where.append(date_filter_travel)
-        dept_expense_join_map = {
-            1: Department.id == Employee.department_id,
-            2: Department.id == Employee.level2_department_id,
-            3: Department.id == Employee.level3_department_id,
+        
+        # Get all employees belonging to this department at this level
+        emp_id_col_map = {
+            1: Employee.department_id,
+            2: Employee.level2_department_id,
+            3: Employee.level3_department_id,
+        }
+        
+        emp_ids = db.query(Employee.id).filter(
+            emp_id_col_map[level] == dept_id
+        ).all()
+        emp_ids = [e[0] for e in emp_ids]
+        
+        dept_employee_map[dept_name] = {
+            'dept_id': dept_id,
+            'person_count': row.person_count or 0,
+            'avg_work_hours': float(row.avg_work_hours or 0),
+            'holiday_avg_hours': float(row.holiday_avg_hours or 0),
+            'emp_ids': emp_ids
         }
 
-        cost_query = db.query(
-            func.sum(TravelExpense.amount).label('total_cost')
-        ).join(
-            Employee, TravelExpense.employee_id == Employee.id
-        ).join(
-            Department, dept_expense_join_map[level]
-        ).filter(
-            Department.name == dept_name,
-            *travel_where
-        )
+    # Get travel costs for each department using employee IDs directly
+    departments = []
+    for dept_name, info in dept_employee_map.items():
+        emp_ids = info['emp_ids']
+        
+        total_cost = 0.0
+        if emp_ids:
+            # Query travel expenses by employee IDs directly (no need to join Department again)
+            travel_where = [
+                TravelExpense.upload_id.in_(upload_ids),
+                TravelExpense.employee_id.in_(emp_ids)
+            ]
+            if date_filter_travel is not None:
+                travel_where.append(date_filter_travel)
 
-        # Add parent filter if needed (for cost query)
-        if parent_filter is not None:
-            cost_query = cost_query.filter(parent_filter)
+            cost_result = db.query(
+                func.sum(TravelExpense.amount).label('total_cost')
+            ).filter(
+                *travel_where
+            ).first()
 
-        cost_result = cost_query.first()
-
-        total_cost = float(cost_result.total_cost or 0) if cost_result else 0.0
+            total_cost = float(cost_result.total_cost or 0) if cost_result else 0.0
 
         departments.append({
             'name': dept_name,
-            'person_count': row.person_count or 0,
+            'person_count': info['person_count'],
             'total_cost': total_cost,
-            'avg_work_hours': float(row.avg_work_hours or 0),
-            'holiday_avg_work_hours': float(row.holiday_avg_hours or 0)
+            'avg_work_hours': info['avg_work_hours'],
+            'holiday_avg_work_hours': info['holiday_avg_hours']
         })
+
+    # Sort by total_cost descending
+    departments.sort(key=lambda x: x['total_cost'], reverse=True)
 
     return departments
 
@@ -1986,10 +2008,13 @@ def get_department_details_from_db(
     date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
     date_filter_anomaly = _date_range_filter(Anomaly.date, ranges)
 
-    # Get the department
-    dept = db.query(Department).filter_by(name=department_name).first()
+    # Get the department (filter by level to ensure correct match)
+    dept = db.query(Department).filter_by(name=department_name, level=level).first()
     if not dept:
-        return None
+        # Fallback: try without level filter for backward compatibility
+        dept = db.query(Department).filter_by(name=department_name).first()
+        if not dept:
+            return None
 
     # Build query conditions based on department level
     dept_join_map = {
@@ -1998,6 +2023,17 @@ def get_department_details_from_db(
         3: Department.id == Employee.level3_department_id,
     }
 
+    # Get employee IDs for this department at this level (for travel cost query)
+    emp_id_col_map = {
+        1: Employee.department_id,
+        2: Employee.level2_department_id,
+        3: Employee.level3_department_id,
+    }
+    dept_emp_ids = db.query(Employee.id).filter(
+        emp_id_col_map[level] == dept.id
+    ).all()
+    dept_emp_ids = [e[0] for e in dept_emp_ids]
+
     where_clauses = [
         Department.name == department_name,
         AttendanceRecord.upload_id.in_(upload_ids),
@@ -2005,10 +2041,11 @@ def get_department_details_from_db(
     ]
     where_clauses = [c for c in where_clauses if c is not None]
 
-    # Get basic statistics
+    # Get basic statistics with correct work hours calculation:
+    # - avg_work_hours: only for status='上班' (workday attendance)
     result = db.query(
         func.count(func.distinct(Employee.id)).label('person_count'),
-        func.avg(AttendanceRecord.work_hours).label('avg_work_hours'),
+        func.avg(case((AttendanceRecord.status == '上班', AttendanceRecord.work_hours), else_=None)).label('avg_work_hours'),
         func.count(AttendanceRecord.id).label('total_attendance_days')
     ).join(
         Employee, AttendanceRecord.employee_id == Employee.id
@@ -2056,7 +2093,7 @@ def get_department_details_from_db(
         Department, dept_join_map[level]
     ).filter(and_(*weekend_where)).scalar() or 0
 
-    # Get holiday average work hours (公休日上班)
+    # Get holiday average work hours (公休日上班) - use exact match
     holiday_avg_work_hours = db.query(
         func.avg(AttendanceRecord.work_hours)
     ).select_from(
@@ -2067,7 +2104,7 @@ def get_department_details_from_db(
         Department, dept_join_map[level]
     ).filter(
         Department.name == department_name,
-        AttendanceRecord.status.like('%公休日上班%'),
+        AttendanceRecord.status == '公休日上班',
         AttendanceRecord.upload_id.in_(upload_ids),
         date_filter_attendance if date_filter_attendance is not None else True,
         AttendanceRecord.work_hours.isnot(None),
@@ -2088,29 +2125,25 @@ def get_department_details_from_db(
         date_filter_attendance if date_filter_attendance is not None else True
     ).scalar() or 0
 
-    # Get travel cost
-    travel_where = [
-        Department.name == department_name,
-        TravelExpense.upload_id.in_(upload_ids),
-        date_filter_travel
-    ]
-    travel_where = [c for c in travel_where if c is not None]
-    travel_cost = db.query(func.sum(TravelExpense.amount)).select_from(
-        TravelExpense
-    ).join(
-        Employee, TravelExpense.employee_id == Employee.id
-    ).join(
-        Department, dept_join_map[level]
-    ).filter(and_(*travel_where)).scalar() or 0
+    # Get travel cost using employee IDs directly (not through Department JOIN)
+    travel_cost = 0
+    travel_days = 0
+    if dept_emp_ids:
+        travel_where = [
+            TravelExpense.upload_id.in_(upload_ids),
+            TravelExpense.employee_id.in_(dept_emp_ids)
+        ]
+        if date_filter_travel is not None:
+            travel_where.append(date_filter_travel)
+        
+        travel_cost = db.query(func.sum(TravelExpense.amount)).filter(
+            *travel_where
+        ).scalar() or 0
 
-    # Get unique travel days
-    travel_days = db.query(func.count(func.distinct(func.date(TravelExpense.date)))).select_from(
-        TravelExpense
-    ).join(
-        Employee, TravelExpense.employee_id == Employee.id
-    ).join(
-        Department, dept_join_map[level]
-    ).filter(and_(*travel_where)).scalar() or 0
+        # Get unique travel days
+        travel_days = db.query(func.count(func.distinct(func.date(TravelExpense.date)))).filter(
+            *travel_where
+        ).scalar() or 0
 
     # Get leave days (assuming status like '请假' indicates leave)
     leave_days = db.query(func.count(func.distinct(func.date(AttendanceRecord.date)))).select_from(

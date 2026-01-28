@@ -326,18 +326,25 @@ const Departments = () => {
 
     const { total_travel_cost, attendance_days_distribution, travel_ranking, avg_hours_ranking, level2_department_stats } = level1Statistics
 
+    // 排行榜数据：确保按数值从高到低（顶部为最大值）
+    const travelRankingDesc = [...travel_ranking].sort((a: any, b: any) => b.value - a.value)
+    const avgHoursRankingDesc = [...avg_hours_ranking].sort((a: any, b: any) => b.value - a.value)
+
     // 考勤天数分布饼图
+    const mapAttendanceLabel = (name: string) => name === '上班' ? '工作日上班' : name
+
     const attendancePieOption: EChartsOption = {
       title: { text: '考勤天数分布', left: 'center' },
-      tooltip: { trigger: 'item' },
+      tooltip: { trigger: 'item', formatter: '{b}: {c}天 ({d}%)' },
       legend: { orient: 'vertical', left: 'left' },
       series: [
         {
           name: '天数',
           type: 'pie',
           radius: '50%',
+          label: { show: true, formatter: '{b}: {d}%' },
           data: Object.entries(attendance_days_distribution).map(([name, value]) => ({
-            name,
+            name: mapAttendanceLabel(name),
             value: value as number,
           })),
           emphasis: {
@@ -359,12 +366,12 @@ const Departments = () => {
       xAxis: { type: 'value' },
       yAxis: {
         type: 'category',
-        data: [...travel_ranking].reverse().map((r: any) => r.name),
+        data: travelRankingDesc.map((r: any) => r.name),
       },
       series: [
         {
           type: 'bar',
-          data: [...travel_ranking].reverse().map((r: any) => ({
+          data: travelRankingDesc.map((r: any) => ({
             value: r.value,
             itemStyle: { color: '#5470c6' },
           })),
@@ -385,12 +392,12 @@ const Departments = () => {
       xAxis: { type: 'value', name: '小时' },
       yAxis: {
         type: 'category',
-        data: [...avg_hours_ranking].reverse().map((r: any) => r.name),
+        data: avgHoursRankingDesc.map((r: any) => r.name),
       },
       series: [
         {
           type: 'bar',
-          data: [...avg_hours_ranking].reverse().map((r: any) => ({
+          data: avgHoursRankingDesc.map((r: any) => ({
             value: r.value,
             itemStyle: { color: '#73c0de' },
           })),
@@ -481,19 +488,21 @@ const Departments = () => {
     if (!selectedDepartment) return null
 
     const { attendance_days_distribution } = selectedDepartment
+    const mapAttendanceLabel = (name: string) => name === '上班' ? '工作日上班' : name
 
     // 考勤天数分布饼图
     const attendancePieOption: EChartsOption = {
       title: { text: '考勤天数分布', left: 'center' },
-      tooltip: { trigger: 'item' },
+      tooltip: { trigger: 'item', formatter: '{b}: {c}天 ({d}%)' },
       legend: { orient: 'vertical', left: 'left' },
       series: [
         {
           name: '天数',
           type: 'pie',
           radius: '50%',
+          label: { show: true, formatter: '{b}: {d}%' },
           data: Object.entries(attendance_days_distribution).map(([name, value]) => ({
-            name,
+            name: mapAttendanceLabel(name),
             value,
           })),
           emphasis: {
@@ -507,6 +516,10 @@ const Departments = () => {
       ],
     }
 
+    // 排行榜数据：确保按数值从高到低展示（顶部为最高值）
+    const travelRankingDesc = [...selectedDepartment.travel_ranking].sort((a, b) => b.value - a.value)
+    const longestHoursDesc = [...selectedDepartment.longest_hours_ranking].sort((a, b) => b.value - a.value)
+
     // 出差排行榜
     const travelRankingOption: EChartsOption = {
       title: { text: '出差排行榜', left: 'center' },
@@ -515,12 +528,12 @@ const Departments = () => {
       xAxis: { type: 'value' },
       yAxis: {
         type: 'category',
-        data: selectedDepartment.travel_ranking.map((r) => r.name),
+        data: travelRankingDesc.map((r) => r.name),
       },
       series: [
         {
           type: 'bar',
-          data: selectedDepartment.travel_ranking.map((r) => ({
+          data: travelRankingDesc.map((r) => ({
             value: r.value,
             itemStyle: { color: '#5470c6' },
           })),
@@ -563,12 +576,12 @@ const Departments = () => {
       xAxis: { type: 'value', name: '小时' },
       yAxis: {
         type: 'category',
-        data: selectedDepartment.longest_hours_ranking.map((r) => r.name),
+        data: longestHoursDesc.map((r) => r.name),
       },
       series: [
         {
           type: 'bar',
-          data: selectedDepartment.longest_hours_ranking.map((r) => ({
+          data: longestHoursDesc.map((r) => ({
             value: r.value,
             itemStyle: { color: '#73c0de' },
           })),

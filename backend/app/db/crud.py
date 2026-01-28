@@ -2139,10 +2139,10 @@ def get_department_details_from_db(
         date_filter_anomaly if date_filter_anomaly is not None else True
     ).scalar() or 0
 
-    # Get attendance days distribution
+    # Get attendance days distribution (person-days, strict status match)
     attendance_dist = {}
     for status in ['上班', '请假', '出差', '公休日上班']:
-        count = db.query(func.count(func.distinct(func.date(AttendanceRecord.date)))).select_from(
+        count = db.query(func.count(AttendanceRecord.id)).select_from(
             AttendanceRecord
         ).join(
             Employee, AttendanceRecord.employee_id == Employee.id
@@ -2150,7 +2150,7 @@ def get_department_details_from_db(
             Department, dept_join_map[level]
         ).filter(
             Department.name == department_name,
-            AttendanceRecord.status.like(f'%{status}%'),
+            AttendanceRecord.status == status,
             AttendanceRecord.upload_id.in_(upload_ids),
             date_filter_attendance if date_filter_attendance is not None else True
         ).scalar() or 0
@@ -2434,10 +2434,10 @@ def get_level1_department_statistics_from_db(
         date_filter_travel if date_filter_travel is not None else True
     ).scalar() or 0
 
-    # Query 2: Attendance status distribution for all level 2 departments
+    # Query 2: Attendance status distribution for all level 2 departments（person-days, strict status match）
     attendance_dist = db.query(
         AttendanceRecord.status,
-        func.count(func.distinct(func.date(AttendanceRecord.date))).label('count')
+        func.count(AttendanceRecord.id).label('count')
     ).join(Employee, AttendanceRecord.employee_id == Employee.id).filter(
         Employee.level2_department_id.in_(level2_dept_ids),
         AttendanceRecord.upload_id.in_(upload_ids),

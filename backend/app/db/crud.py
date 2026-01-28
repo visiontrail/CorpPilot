@@ -155,14 +155,15 @@ def get_or_create_employee(db: Session, name: str, level1_id: int, level2_id: Op
     elif update_dept:
         # 只有在明确要求更新部门时才更新（避免覆盖已有的正确部门信息）
         employee.department_id = level1_id
+
+        # 仅当新数据提供了有效的部门 ID 时才更新，避免因为差旅表缺少三级部门信息而把已有映射清空
         if level2_id and level2_id > 0:
             employee.level2_department_id = level2_id
-        else:
-            employee.level2_department_id = None
+        # 如果没有提供 level2_id，则保留现有值
+
         if level3_id and level3_id > 0:
             employee.level3_department_id = level3_id
-        else:
-            employee.level3_department_id = None
+        # 如果没有提供 level3_id，则保留现有值，防止被意外置空
         db.flush()
     return employee.id
 

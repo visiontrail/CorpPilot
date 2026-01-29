@@ -219,19 +219,19 @@ const Departments = () => {
   if (currentLevel >= 1) {
     breadcrumbItems.push({
       key: 'departments',
-      title: currentLevel > 1 ? <a onClick={() => handleBreadcrumbClick(1)}>部门管理</a> : '部门管理',
+      title: currentLevel > 1 ? <a onClick={() => handleBreadcrumbClick(1)}>部门管理</a> : <span>部门管理</span>,
     })
   }
   if (currentLevel >= 2 && selectedLevel1) {
     breadcrumbItems.push({
       key: `level1-${selectedLevel1}`,
-      title: currentLevel > 2 ? <a onClick={() => handleBreadcrumbClick(2)}>{selectedLevel1}</a> : selectedLevel1,
+      title: currentLevel > 2 ? <a onClick={() => handleBreadcrumbClick(2)}>{selectedLevel1}</a> : <span>{selectedLevel1}</span>,
     })
   }
   if (currentLevel === 3 && selectedLevel2) {
     breadcrumbItems.push({
       key: `level2-${selectedLevel2}`,
-      title: selectedLevel2,
+      title: <span>{selectedLevel2}</span>,
     })
   }
 

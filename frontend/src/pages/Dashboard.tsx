@@ -296,8 +296,7 @@ const Dashboard = () => {
         style: {
           text: '基于工作日计算的平均工时',
           fontSize: 12,
-          fill: '#999',
-          textBaseline: 'middle'
+          fill: '#999'
         }
       }
     ],

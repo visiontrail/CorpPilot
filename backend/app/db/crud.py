@@ -2181,22 +2181,27 @@ def get_department_details_from_db(
     ).scalar() or 0
 
     # Get attendance days distribution (person-days, strict status match)
-    attendance_dist = {}
-    for status in ['上班', '请假', '出差', '公休日上班']:
-        count = db.query(func.count(AttendanceRecord.id)).select_from(
-            AttendanceRecord
-        ).join(
-            Employee, AttendanceRecord.employee_id == Employee.id
-        ).join(
-            Department, dept_join_map[level]
-        ).filter(
-            Department.name == department_name,
-            AttendanceRecord.status == status,
-            AttendanceRecord.upload_id.in_(upload_ids),
-            date_filter_attendance if date_filter_attendance is not None else True
-        ).scalar() or 0
-        if count > 0:
-            attendance_dist[status] = count
+    attendance_dist_rows = db.query(
+        AttendanceRecord.status,
+        func.count(AttendanceRecord.id).label('count')
+    ).select_from(
+        AttendanceRecord
+    ).join(
+        Employee, AttendanceRecord.employee_id == Employee.id
+    ).join(
+        Department, dept_join_map[level]
+    ).filter(
+        Department.name == department_name,
+        AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance if date_filter_attendance is not None else True
+    ).group_by(
+        AttendanceRecord.status
+    ).all()
+
+    attendance_dist = {
+        (row.status or '未知'): row.count
+        for row in attendance_dist_rows
+    }
 
     # Get travel ranking (top 10 by travel days count)
     travel_ranking = db.query(

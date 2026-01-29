@@ -54,10 +54,17 @@ const Departments = () => {
   const [level1Statistics, setLevel1Statistics] = useState<any>(null)
 
   useEffect(() => {
-    if (selectedMonths.length > 0) {
-      loadDepartments(1)
-    } else {
+    if (selectedMonths.length === 0) {
       setDepartments([])
+      return
+    }
+
+    if (currentLevel === 1) {
+      loadDepartments(1)
+    } else if (currentLevel === 2 && selectedLevel1) {
+      loadDepartments(2, selectedLevel1)
+    } else if (currentLevel === 3 && selectedLevel2) {
+      loadDepartments(3, selectedLevel2)
     }
   }, [selectedMonths])
 

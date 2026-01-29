@@ -460,7 +460,7 @@ export const getLevel1DepartmentStatistics = async (
     weekend_attendance_count: number
     travel_days: number
     leave_days: number
-    anomaly_days: number
+    anomaly_days: number // 未知天数（疑似异常）
     late_after_1930_count: number
     total_cost: number
   }>
@@ -489,7 +489,7 @@ export const getLevel1DepartmentStatistics = async (
       weekend_attendance_count: number
       travel_days: number
       leave_days: number
-      anomaly_days: number
+      anomaly_days: number // 未知天数（疑似异常）
       late_after_1930_count: number
       total_cost: number
     }>

@@ -417,7 +417,7 @@ const Departments = () => {
       { title: '周末出勤次数', dataIndex: 'weekend_attendance_count', key: 'weekend_attendance_count' },
       { title: '出差天数', dataIndex: 'travel_days', key: 'travel_days', render: (v: number) => `${v}天` },
       { title: '请假天数', dataIndex: 'leave_days', key: 'leave_days', render: (v: number) => `${v}天` },
-      { title: '异常天数', dataIndex: 'anomaly_days', key: 'anomaly_days', render: (v: number) => `${v}天` },
+      { title: '未知天数（疑似异常）', dataIndex: 'anomaly_days', key: 'anomaly_days', render: (v: number) => `${v}天` },
       { title: '晚上7:30后下班人数', dataIndex: 'late_after_1930_count', key: 'late_after_1930_count', render: (v: number) => `${v}人` },
       { title: '工作日平均工时', dataIndex: 'avg_work_hours', key: 'avg_work_hours', render: (v: number) => `${v.toFixed(1)}h` },
       { title: '节假日平均工时', dataIndex: 'holiday_avg_work_hours', key: 'holiday_avg_work_hours', render: (v: number) => v > 0 ? `${v.toFixed(1)}h` : '-' },
@@ -545,9 +545,9 @@ const Departments = () => {
       ],
     }
 
-    // 异常排行榜
+    // 未知天数排行榜（疑似异常）
     const anomalyRankingOption: EChartsOption = {
-      title: { text: '异常排行榜', left: 'center' },
+      title: { text: '未知天数排行榜（疑似异常）', left: 'center' },
       tooltip: { trigger: 'axis' },
       grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
       xAxis: { type: 'value' },
@@ -624,7 +624,7 @@ const Departments = () => {
           <Descriptions bordered column={3}>
             <Descriptions.Item label="出差天数">{attendance_days_distribution['出差'] || 0} 人天</Descriptions.Item>
             <Descriptions.Item label="请假天数">{attendance_days_distribution['请假'] || 0} 人天</Descriptions.Item>
-            <Descriptions.Item label="异常天数">{selectedDepartment.anomaly_days} 天</Descriptions.Item>
+            <Descriptions.Item label="未知天数（疑似异常）">{selectedDepartment.anomaly_days} 天</Descriptions.Item>
           </Descriptions>
 
           <Descriptions bordered column={2}>
@@ -648,7 +648,7 @@ const Departments = () => {
 
           <Row gutter={16} style={{ marginTop: 16 }}>
             <Col span={12}>
-              <Card title="异常排行榜 (Top 10)">
+              <Card title="未知天数排行榜（疑似异常） (Top 10)">
                 <ReactECharts option={anomalyRankingOption} style={{ height: 300 }} />
               </Card>
             </Col>

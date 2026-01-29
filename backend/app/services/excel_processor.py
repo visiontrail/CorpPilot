@@ -116,6 +116,14 @@ class ExcelProcessor:
         # 删除空行
         df = df.dropna(subset=['姓名'], how='all')
 
+        # 规范化考勤状态，缺失/空值统一为“未知”
+        if '当日状态判断' in df.columns:
+            status_series = df['当日状态判断']
+            status_clean = status_series.astype(str).str.strip()
+            unknown_mask = status_series.isna() | status_clean.eq('') | status_clean.eq('nan')
+            df.loc[unknown_mask, '当日状态判断'] = '未知'
+            df['当日状态判断'] = df['当日状态判断'].astype(str).str.strip()
+
         if use_cache:
             self._attendance_cache = df
         
@@ -294,6 +302,19 @@ class ExcelProcessor:
         )
         self._combined_travel_cache = combined
         return combined
+
+    def _unknown_status_mask(self, df: pd.DataFrame) -> pd.Series:
+        """
+        标记考勤状态为未知/缺失的记录，用于疑似异常统计
+        """
+        if df is None:
+            return pd.Series(dtype=bool)
+        if df.empty or '当日状态判断' not in df.columns:
+            return pd.Series(False, index=df.index, dtype=bool)
+
+        status_series = df['当日状态判断']
+        status_clean = status_series.astype(str).str.strip()
+        return status_series.isna() | status_clean.eq('') | status_clean.eq('未知')
     
     def extract_project_code(self, project_str: str) -> Tuple[str, str]:
         """
@@ -1655,22 +1676,17 @@ class ExcelProcessor:
         if '当日状态判断' in dept_df.columns:
             leave_days = int(dept_df[dept_df['当日状态判断'] == '请假'].shape[0])
 
-        # 7. 异常天数（通过交叉验证）
-        anomalies = self.cross_check_attendance_travel()
-        dept_anomalies = [a for a in anomalies if a.get('department') == department_name]
-        anomaly_days = len(dept_anomalies)
+        # 7. 未知天数（疑似异常）：来自考勤状态缺失/未知
+        unknown_mask = self._unknown_status_mask(dept_df)
+        anomaly_days = int(unknown_mask.sum())
 
         # 8. 晚上7:30后下班人数
         late_after_1930_count = 0
         if '最晚19:30之后' in dept_df.columns:
             late_after_1930_count = int(dept_df[dept_df['最晚19:30之后'] == '符合']['姓名'].nunique())
 
-        # 9. 周末出勤次数
-        weekend_attendance_count = 0
-        if '日期' in dept_df.columns and '当日状态判断' in dept_df.columns:
-            dept_df['weekday'] = dept_df['日期'].dt.dayofweek
-            weekend_df = dept_df[dept_df['weekday'].isin([5, 6])]  # 5=周六, 6=周日
-            weekend_attendance_count = int(weekend_df[weekend_df['当日状态判断'].isin(['上班', '出差'])].shape[0])
+        # 9. 周末出勤次数（与考勤分布保持一致，仅统计"公休日上班"）
+        weekend_attendance_count = int(attendance_days_distribution.get('公休日上班', weekend_work_days))
 
         # 10. 出差排行榜（按出差天数）
         travel_ranking = []
@@ -1685,12 +1701,16 @@ class ExcelProcessor:
 
         # 11. 异常排行榜（按异常次数）
         anomaly_ranking = []
-        if dept_anomalies:
-            from collections import Counter
-            anomaly_counts = Counter([a.get('name', '') for a in dept_anomalies])
+        if '姓名' in dept_df.columns and '当日状态判断' in dept_df.columns and unknown_mask.any():
+            unknown_counts = (
+                dept_df[unknown_mask]
+                .groupby('姓名')
+                .size()
+                .sort_values(ascending=False)
+            )
             anomaly_ranking = [
-                {'name': name, 'value': int(count), 'detail': f'{count}次'}
-                for name, count in anomaly_counts.most_common(10)
+                {'name': name, 'value': int(count), 'detail': f'{count}天'}
+                for name, count in unknown_counts.head(10).items()
             ]
 
         # 12. 最晚下班排行榜
@@ -1843,13 +1863,8 @@ class ExcelProcessor:
                 if '当日状态判断' in l2_df.columns:
                     weekend_work_days = int(l2_df[l2_df['当日状态判断'] == '公休日上班'].shape[0])
 
-                # 周末出勤次数
-                weekend_attendance_count = 0
-                if '日期' in l2_df.columns and '当日状态判断' in l2_df.columns:
-                    l2_df_copy = l2_df.copy()
-                    l2_df_copy['weekday'] = l2_df_copy['日期'].dt.dayofweek
-                    weekend_df = l2_df_copy[l2_df_copy['weekday'].isin([5, 6])]
-                    weekend_attendance_count = int(weekend_df[weekend_df['当日状态判断'].isin(['上班', '出差'])].shape[0])
+                # 周末出勤次数（同步公休日上班统计，保持与饼图数据一致）
+                weekend_attendance_count = weekend_work_days
 
                 # 出差天数
                 travel_days = 0
@@ -1861,10 +1876,9 @@ class ExcelProcessor:
                 if '当日状态判断' in l2_df.columns:
                     leave_days = int(l2_df[l2_df['当日状态判断'] == '请假'].shape[0])
 
-                # 异常天数
-                anomalies = self.cross_check_attendance_travel()
-                dept_anomalies = [a for a in anomalies if a.get('department') == l2_dept]
-                anomaly_days = len(dept_anomalies)
+                # 未知天数（疑似异常）
+                unknown_mask = self._unknown_status_mask(l2_df)
+                anomaly_days = int(unknown_mask.sum())
 
                 # 晚上7:30后下班人数
                 late_after_1930_count = 0

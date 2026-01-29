@@ -35,6 +35,12 @@ def _date_range_filter(column, ranges: List[Tuple[datetime, datetime]]):
     return or_(*[and_(column >= start, column <= end) for start, end in ranges])
 
 
+def _unknown_status_condition(status_column):
+    """SQL condition for unknown/empty attendance status."""
+    trimmed = func.trim(status_column)
+    return or_(status_column.is_(None), trimmed.in_(['', '未知', 'nan', 'None']))
+
+
 def _serialize_anomaly_row(row, date_format: str = '%Y-%m-%d') -> dict:
     """Normalize anomaly row with a fallback description."""
     date_str = row.date.strftime(date_format)
@@ -1114,15 +1120,8 @@ def get_department_detail_metrics(
         Anomaly.anomaly_type == 'A'
     ).scalar() or 0
 
-    # Query 5: Weekend attendance (Saturday/Sunday)
-    weekend_attendance = db.query(func.count(AttendanceRecord.id)).join(
-        Employee, AttendanceRecord.employee_id == Employee.id
-    ).filter(
-        dept_field == dept.id,
-        AttendanceRecord.upload_id == upload.id,
-        AttendanceRecord.status.in_(['上班', '出差']),
-        text("strftime('%w', date) IN ('0', '6')")  # Sunday=0, Saturday=6
-    ).scalar() or 0
+    # Query 5: Weekend attendance，按"公休日上班"计数以与考勤分布对齐
+    weekend_attendance = weekend_work_days
 
     # Query 6: Late after 19:30 count
     late_after_1930_count = db.query(func.count(func.distinct(Employee.id))).join(
@@ -1307,14 +1306,13 @@ def get_level1_department_statistics(
         COUNT(CASE WHEN a.status = '公休日上班' THEN 1 END) as weekend_work_days,
         COUNT(CASE WHEN a.status = '出差' THEN 1 END) as travel_days,
         SUM(CASE WHEN a.status = '请假' THEN 1 ELSE 0 END) as leave_days,
-        COUNT(DISTINCT CASE WHEN an.anomaly_type = 'A' THEN e.id END) as anomaly_days,
+        COUNT(CASE WHEN COALESCE(TRIM(a.status), '') IN ('', '未知', 'nan', 'None') THEN 1 END) as anomaly_days,
         COUNT(DISTINCT CASE WHEN a.is_late_after_1930 = 1 THEN e.id END) as late_after_1930_count,
-        COUNT(CASE WHEN a.status IN ('上班', '出差') AND strftime('%w', a.date) IN ('0', '6') THEN 1 END) as weekend_attendance_count,
+        COUNT(CASE WHEN a.status = '公休日上班' THEN 1 END) as weekend_attendance_count,
         COALESCE(SUM(t.amount), 0) as total_cost
     FROM dim_department d
     JOIN dim_employee e ON e.level2_department_id = d.id
     LEFT JOIN fact_attendance a ON a.employee_id = e.id AND a.upload_id = :upload_id
-    LEFT JOIN anomalies an ON an.employee_id = e.id AND an.upload_id = :upload_id
     LEFT JOIN fact_travel_expense t ON t.employee_id = e.id AND t.upload_id = :upload_id
     WHERE d.id IN :dept_ids
     GROUP BY d.id
@@ -2007,7 +2005,6 @@ def get_department_details_from_db(
 
     date_filter_attendance = _date_range_filter(AttendanceRecord.date, ranges)
     date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
-    date_filter_anomaly = _date_range_filter(Anomaly.date, ranges)
 
     # Get the department (filter by level to ensure correct match)
     dept = db.query(Department).filter_by(name=department_name, level=level).first()
@@ -2071,9 +2068,6 @@ def get_department_details_from_db(
     workday_where = list(where_clauses) + [
         func.extract('dow', AttendanceRecord.date).in_([0, 1, 2, 3, 4])  # Monday=0 in SQLite
     ]
-    weekend_where = list(where_clauses) + [
-        func.extract('dow', AttendanceRecord.date).in_([5, 6])  # Saturday=5, Sunday=6
-    ]
 
     workday_attendance = db.query(func.count(AttendanceRecord.id)).select_from(
         AttendanceRecord
@@ -2083,23 +2077,8 @@ def get_department_details_from_db(
         Department, dept_join_map[level]
     ).filter(and_(*workday_where)).scalar() or 0
 
-    weekend_work_days = db.query(func.count(func.distinct(
-        func.date(AttendanceRecord.date)
-    ))).select_from(
-        AttendanceRecord
-    ).join(
-        Employee, AttendanceRecord.employee_id == Employee.id
-    ).join(
-        Department, dept_join_map[level]
-    ).filter(and_(*weekend_where)).scalar() or 0
-
-    weekend_attendance_count = db.query(func.count(AttendanceRecord.id)).select_from(
-        AttendanceRecord
-    ).join(
-        Employee, AttendanceRecord.employee_id == Employee.id
-    ).join(
-        Department, dept_join_map[level]
-    ).filter(and_(*weekend_where)).scalar() or 0
+    weekend_work_days = 0
+    weekend_attendance_count = 0
 
     # Get holiday average work hours (公休日上班) - use exact match
     holiday_avg_work_hours = db.query(
@@ -2167,17 +2146,19 @@ def get_department_details_from_db(
         date_filter_attendance if date_filter_attendance is not None else True
     ).scalar() or 0
 
-    # Get anomaly days
-    anomaly_days = db.query(func.count(func.distinct(func.date(Anomaly.date)))).select_from(
-        Anomaly
+    # Get unknown days (疑似异常)：考勤状态缺失/未知的记录数
+    unknown_status_cond = _unknown_status_condition(AttendanceRecord.status)
+    anomaly_days = db.query(func.count(AttendanceRecord.id)).select_from(
+        AttendanceRecord
     ).join(
-        Employee, Anomaly.employee_id == Employee.id
+        Employee, AttendanceRecord.employee_id == Employee.id
     ).join(
         Department, dept_join_map[level]
     ).filter(
         Department.name == department_name,
-        Anomaly.upload_id.in_(upload_ids),
-        date_filter_anomaly if date_filter_anomaly is not None else True
+        AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance if date_filter_attendance is not None else True,
+        unknown_status_cond
     ).scalar() or 0
 
     # Get attendance days distribution (person-days, strict status match)
@@ -2202,6 +2183,10 @@ def get_department_details_from_db(
         (row.status or '未知'): row.count
         for row in attendance_dist_rows
     }
+
+    # Align weekend metrics with attendance distribution ("公休日上班"为周末出勤)
+    weekend_work_days = int(attendance_dist.get('公休日上班', 0))
+    weekend_attendance_count = weekend_work_days
 
     # Get travel ranking (top 10 by travel days count)
     travel_ranking = db.query(
@@ -2230,23 +2215,24 @@ def get_department_details_from_db(
     # Get anomaly ranking (top 10 by count)
     anomaly_ranking = db.query(
         Employee.name.label('name'),
-        func.count(Anomaly.id).label('value')
+        func.count(AttendanceRecord.id).label('value')
     ).select_from(
-        Anomaly
+        AttendanceRecord
     ).join(
-        Employee, Anomaly.employee_id == Employee.id
+        Employee, AttendanceRecord.employee_id == Employee.id
     ).join(
         Department, dept_join_map[level]
     ).filter(
         Department.name == department_name,
-        Anomaly.upload_id.in_(upload_ids),
-        date_filter_anomaly if date_filter_anomaly is not None else True
+        AttendanceRecord.upload_id.in_(upload_ids),
+        date_filter_attendance if date_filter_attendance is not None else True,
+        unknown_status_cond
     ).group_by(Employee.name).order_by(
-        func.count(Anomaly.id).desc()
+        func.count(AttendanceRecord.id).desc()
     ).limit(10).all()
 
     anomaly_ranking_list = [
-        {'name': r.name, 'value': int(r.value or 0), 'detail': f'{r.value}次'}
+        {'name': r.name, 'value': int(r.value or 0), 'detail': f'{r.value}天'}
         for r in anomaly_ranking
     ]
 
@@ -2457,7 +2443,6 @@ def get_level1_department_statistics_from_db(
 
     date_filter_attendance = _date_range_filter(AttendanceRecord.date, ranges)
     date_filter_travel = _date_range_filter(TravelExpense.date, ranges)
-    date_filter_anomaly = _date_range_filter(Anomaly.date, ranges)
 
     # Get the level 1 department
     level1_dept = db.query(Department).filter_by(name=level1_name, level=1).first()
@@ -2547,16 +2532,15 @@ def get_level1_department_statistics_from_db(
         AVG(CASE WHEN a.status = '公休日上班' AND a.work_hours IS NOT NULL AND a.work_hours != 0 THEN a.work_hours END) as holiday_avg_work_hours,
         COUNT(DISTINCT CASE WHEN a.status = '上班' THEN DATE(a.date) END) as workday_attendance_days,
         COUNT(DISTINCT CASE WHEN a.status = '公休日上班' THEN DATE(a.date) END) as weekend_work_days,
-        COUNT(CASE WHEN a.status IN ('上班', '出差') AND strftime('%w', a.date) IN ('0', '6') THEN 1 END) as weekend_attendance_count,
+        COUNT(CASE WHEN a.status = '公休日上班' THEN 1 END) as weekend_attendance_count,
         COUNT(DISTINCT CASE WHEN a.status = '出差' THEN DATE(a.date) END) as travel_days,
         COUNT(DISTINCT CASE WHEN a.status LIKE '%请假%' THEN DATE(a.date) END) as leave_days,
-        COUNT(DISTINCT CASE WHEN an.anomaly_type = 'A' THEN DATE(an.date) END) as anomaly_days,
+        COUNT(CASE WHEN COALESCE(TRIM(a.status), '') IN ('', '未知', 'nan', 'None') THEN 1 END) as anomaly_days,
         COUNT(DISTINCT CASE WHEN a.is_late_after_1930 = 1 THEN e.id END) as late_after_1930_count,
         COALESCE(tc.total_cost, 0) as total_cost
     FROM dim_department d
     JOIN dim_employee e ON e.level2_department_id = d.id
     LEFT JOIN fact_attendance a ON a.employee_id = e.id AND a.upload_id IN :upload_ids
-    LEFT JOIN anomalies an ON an.employee_id = e.id AND an.upload_id IN :upload_ids
     LEFT JOIN (
         SELECT e2.level2_department_id, COALESCE(SUM(t2.amount), 0) as total_cost
         FROM dim_employee e2

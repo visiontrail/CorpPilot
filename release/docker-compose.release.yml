@@ -24,7 +24,7 @@ services:
     networks:
       - costmatrix-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys;sys.exit(0) if urllib.request.urlopen('http://localhost:8000/').status==200 else sys.exit(1)\""]
       interval: 30s
       timeout: 10s
       retries: 5

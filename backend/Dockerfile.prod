@@ -9,11 +9,6 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# System deps
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc curl && \
-    rm -rf /var/lib/apt/lists/*
-
 # Dependencies
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt

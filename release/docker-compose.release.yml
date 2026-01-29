@@ -1,0 +1,52 @@
+name: costmatrix
+
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-costmatrix-backend}:${IMAGE_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-costmatrix}_backend
+    env_file:
+      - ./.env
+    environment:
+      - DEBUG=${DEBUG:-false}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:8180}
+      - SECRET_KEY=${SECRET_KEY:-change-me}
+      - INITIAL_ADMIN_PASSWORD_FILE=${INITIAL_ADMIN_PASSWORD_FILE:-/app/config/initial_admin_password.txt}
+      - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
+      - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-200}
+    volumes:
+      - ./data/uploads:/app/uploads
+      - ./data/data:/app/data
+      - ./data/logs:/app/logs
+      - ./config:/app/config:ro
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    restart: unless-stopped
+    networks:
+      - costmatrix-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-costmatrix-frontend}:${IMAGE_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-costmatrix}_frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8180}:80"
+    restart: unless-stopped
+    networks:
+      - costmatrix-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+networks:
+  costmatrix-net:
+    driver: bridge
